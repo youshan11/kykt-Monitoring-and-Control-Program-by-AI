@@ -1,0 +1,2 @@
+Missing runtime dependency. Install NI-DAQmx Python support, numpy, and nptdms on the measurement host. Missing module: nidaqmx
+Missing runtime dependency. Install NI-DAQmx Python support, numpy, and nptdms on the measurement host. Missing module: nidaqmx

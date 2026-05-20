@@ -1,0 +1,4 @@
+interface:
+  display_name: "NI DAQ Sampling Control"
+  short_description: "Control NI DAQ sampling from project config documents."
+  default_prompt: "Use the project NI DAQ sampling control skill to start, stop, configure, or inspect data acquisition."
