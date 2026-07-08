@@ -12,7 +12,7 @@ Detailed agent instructions live at:
 
 External operator-facing surfaces:
 
-- Edit sampling settings in `sampling_config.md`.
+- Edit sampling settings in `sampling_config.docx`.
 - Send natural-language commands such as `开始采样` or `停止采样`.
 - Read returned TDMS files and logs from `data/`.
 

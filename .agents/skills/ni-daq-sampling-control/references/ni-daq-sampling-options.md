@@ -1,6 +1,6 @@
 # NI DAQ 可选采样配置参考
 
-本文档记录测控主机上各 NI 设备端口可支持的采样相关配置，用作后续扩展 `sampling_config.md`、`sampling-config-format.md`、配置校验逻辑和采样程序的依据。
+本文档记录测控主机上各 NI 设备端口可支持的采样相关配置，用作后续扩展 `sampling_config.docx`、`sampling-config-format.md`、配置校验逻辑和采样程序的依据。
 
 - 测控主机：`admin@192.168.1.103`
 - 探测日期：2026-05-20 UTC
@@ -409,15 +409,16 @@ PXI1Slot8 的 AO 应配置为 `static` 或 on-demand 输出，不应配置为有
   - 单条线 + `chan_for_all_lines`：支持
   - 单条线 + `chan_per_line`：支持
 
-## 建议的新 TOML 结构
+## 当前 TOML 任务结构
 
-当前结构适合单个 AI 采样任务，但不适合覆盖所有端口。后续建议引入 `[[tasks]]`，同时保留旧结构一段时间作为兼容入口。
+`sampling_config.docx` 现在使用 `schema_version = 2` 和 `[[tasks]]` 描述任务，不再使用旧的 `[acquisition]` 与 `[channels]` 结构。每个 `[[tasks]]` 对应一个 NI-DAQmx 任务。
 
 示例：
 
 ```toml
 [[tasks]]
 name = "ai_slot5"
+enabled = true
 type = "ai"
 measurement = "voltage"
 channels = ["PXI1Slot5/ai0"]
@@ -430,6 +431,7 @@ voltage_max = 10.0
 
 [[tasks]]
 name = "di_slot3"
+enabled = true
 type = "di"
 channels = ["PXI1Slot3/port0"]
 line_grouping = "chan_for_all_lines"
@@ -439,6 +441,7 @@ samples_per_read = 100
 
 [[tasks]]
 name = "ao_slot8_voltage"
+enabled = true
 type = "ao"
 output_type = "voltage"
 channels = ["PXI1Slot8/ao0"]
@@ -449,6 +452,7 @@ voltage_max = 10.24
 
 [[tasks]]
 name = "counter_slot3"
+enabled = true
 type = "ci"
 counter_mode = "count_edges"
 channels = ["PXI1Slot3/ctr0"]
@@ -456,7 +460,7 @@ timing_mode = "continuous"
 sample_clock_source = "/PXI1Slot3/di/SampleClock"
 ```
 
-## 后续实现约束
+## 实现约束
 
 - 在 runner 真正支持某类任务前，不应只放宽配置校验。
 - 配置校验应同时检查通道名和能力约束。
