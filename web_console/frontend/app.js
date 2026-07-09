@@ -1,0 +1,200 @@
+const messagesEl = document.getElementById("messages");
+const formEl = document.getElementById("chatForm");
+const inputEl = document.getElementById("messageInput");
+const sendButton = document.getElementById("sendButton");
+const configFile = document.getElementById("configFile");
+const configStatus = document.getElementById("configStatus");
+const tdmsFiles = document.getElementById("tdmsFiles");
+const logOutput = document.getElementById("logOutput");
+
+let busy = false;
+let lastMessagesJson = "";
+let refreshTimer = null;
+let pendingAgent = false;
+
+function setBusy(value) {
+  busy = value;
+  sendButton.disabled = value;
+  document.querySelectorAll(".quick-actions button").forEach((button) => {
+    button.disabled = value;
+  });
+}
+
+function formatSize(bytes) {
+  if (bytes > 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes > 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+function renderMessages(messages, force = false) {
+  const displayMessages = pendingAgent
+    ? [
+        ...(messages || []),
+        {
+          role: "system",
+          content: "agent 正在处理...",
+          created_at: "",
+        },
+      ]
+    : messages || [];
+  const nextMessagesJson = JSON.stringify(displayMessages);
+  if (!force && nextMessagesJson === lastMessagesJson) return;
+  lastMessagesJson = nextMessagesJson;
+
+  const nearBottom =
+    messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 80;
+  messagesEl.innerHTML = "";
+  for (const message of displayMessages) {
+    const item = document.createElement("article");
+    item.className = `message ${message.role}`;
+    const meta = document.createElement("div");
+    meta.className = "message-meta";
+    meta.textContent = `${message.role} · ${message.created_at || ""}`;
+    const content = document.createElement("div");
+    content.className = "message-content";
+    content.textContent = message.content || "";
+    item.append(meta, content);
+    messagesEl.appendChild(item);
+  }
+  if (nearBottom || force) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+}
+
+async function requestJson(url, options) {
+  const response = await fetch(url, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+async function loadMessages() {
+  const payload = await requestJson("/api/messages");
+  renderMessages(payload.messages || []);
+}
+
+function appendLocalMessage(role, content) {
+  const messages = lastMessagesJson ? JSON.parse(lastMessagesJson) : [];
+  messages.push({
+    role,
+    content,
+    created_at: new Date().toISOString(),
+  });
+  renderMessages(messages, true);
+}
+
+async function refreshDynamicContent() {
+  await Promise.all([loadMessages(), loadLog(), loadTdms(), loadStatus()]);
+}
+
+function startAutoRefresh(intervalMs = 2000) {
+  if (refreshTimer) return;
+  refreshTimer = window.setInterval(() => {
+    refreshDynamicContent().catch((error) => console.error(error));
+  }, intervalMs);
+}
+
+function stopAutoRefresh() {
+  if (!refreshTimer) return;
+  window.clearInterval(refreshTimer);
+  refreshTimer = null;
+}
+
+async function loadStatus() {
+  const status = await requestJson("/api/status");
+  const name = status.active_config ? status.active_config.split("/").pop() : "sampling_config.docx";
+  configStatus.textContent = status.config_exists
+    ? `当前配置：${name} · ${formatSize(status.config_size)}`
+    : "当前配置不存在";
+}
+
+async function loadLog() {
+  const payload = await requestJson("/api/log");
+  logOutput.textContent = payload.log || "暂无日志";
+}
+
+async function loadTdms() {
+  const payload = await requestJson("/api/tdms");
+  const files = payload.files || [];
+  tdmsFiles.innerHTML = "";
+  if (!files.length) {
+    tdmsFiles.textContent = "暂无 TDMS 文件";
+    return;
+  }
+  for (const file of files) {
+    const row = document.createElement("a");
+    row.className = "file-row";
+    row.href = `/api/tdms/${encodeURIComponent(file.name)}`;
+    row.textContent = `${file.name} · ${formatSize(file.size)}`;
+    tdmsFiles.appendChild(row);
+  }
+}
+
+async function sendMessage(message) {
+  if (!message || busy) return;
+  appendLocalMessage("user", message);
+  pendingAgent = true;
+  renderMessages(JSON.parse(lastMessagesJson), true);
+  inputEl.value = "";
+  setBusy(true);
+  startAutoRefresh(1500);
+  try {
+    await requestJson("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    await refreshDynamicContent();
+  } catch (error) {
+    alert(error.message);
+    await loadMessages().catch(() => {});
+  } finally {
+    pendingAgent = false;
+    setBusy(false);
+    stopAutoRefresh();
+    await refreshDynamicContent().catch(() => {});
+  }
+}
+
+formEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  sendMessage(inputEl.value.trim());
+});
+
+document.querySelectorAll(".quick-actions button").forEach((button) => {
+  button.addEventListener("click", () => sendMessage(button.dataset.message));
+});
+
+configFile.addEventListener("change", async () => {
+  const file = configFile.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append("config", file);
+  setBusy(true);
+  startAutoRefresh(1500);
+  try {
+    await requestJson("/api/upload-config", { method: "POST", body: form });
+    await Promise.all([loadMessages(), loadStatus()]);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    configFile.value = "";
+    setBusy(false);
+    stopAutoRefresh();
+  }
+});
+
+document.getElementById("refreshFiles").addEventListener("click", loadTdms);
+document.getElementById("refreshLog").addEventListener("click", loadLog);
+
+Promise.all([loadMessages(), loadStatus(), loadLog(), loadTdms()]).catch((error) => {
+  console.error(error);
+});
+
+window.setInterval(() => {
+  if (!busy) {
+    refreshDynamicContent().catch((error) => console.error(error));
+  }
+}, 5000);

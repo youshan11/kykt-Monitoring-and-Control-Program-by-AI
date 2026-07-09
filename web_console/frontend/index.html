@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project1 Agent Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="chat-pane" aria-label="Agent 对话">
+        <header class="topbar">
+          <div>
+            <h1>Project1 Agent Console</h1>
+            <p id="configStatus">读取配置状态中...</p>
+          </div>
+          <label class="upload-button">
+            上传 DOCX
+            <input id="configFile" type="file" accept=".docx" />
+          </label>
+        </header>
+
+        <div id="messages" class="messages"></div>
+
+        <div class="quick-actions" aria-label="快捷操作">
+          <button data-message="开始采样">开始执行</button>
+          <button data-message="确认启动">确认启动</button>
+          <button data-message="停止采样">停止执行</button>
+          <button data-message="确认停止">确认停止</button>
+          <button data-message="查看当前采样状态">查询状态</button>
+        </div>
+
+        <form id="chatForm" class="composer">
+          <textarea id="messageInput" rows="2" placeholder="输入要发给 agent 的自然语言命令"></textarea>
+          <button id="sendButton" type="submit">发送</button>
+        </form>
+      </section>
+
+      <aside class="side-pane" aria-label="日志和结果">
+        <section class="panel">
+          <div class="panel-title">
+            <h2>TDMS 文件</h2>
+            <button id="refreshFiles" type="button">刷新</button>
+          </div>
+          <div id="tdmsFiles" class="file-list"></div>
+        </section>
+
+        <section class="panel log-panel">
+          <div class="panel-title">
+            <h2>采集日志</h2>
+            <button id="refreshLog" type="button">刷新</button>
+          </div>
+          <pre id="logOutput"></pre>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/app.js?v=3"></script>
+  </body>
+</html>

@@ -854,6 +854,14 @@ def command_stop(args: argparse.Namespace) -> int:
         return 0
     if not state or state.get("status") != "running":
         print("No running sampling process was found.")
+        if state:
+            output_path = Path(state.get("output_path", paths["output"]))
+            print(f"output: {output_path}")
+            if output_path.exists():
+                print(f"output_size_bytes: {output_path.stat().st_size}")
+            else:
+                print("warning: expected TDMS output file was not found")
+            print(f"log: {state.get('log_file', paths['log'])}")
         return 0
     pid = state.get("pid")
     output_path = Path(state.get("output_path", paths["output"]))
@@ -865,6 +873,12 @@ def command_stop(args: argparse.Namespace) -> int:
         state["stopped_at"] = datetime.now().isoformat(timespec="seconds")
         write_state(state_path, state)
         print("Recorded sampling process is not running.")
+        print(f"output: {output_path}")
+        if output_path.exists():
+            print(f"output_size_bytes: {output_path.stat().st_size}")
+        else:
+            print("warning: expected TDMS output file was not found")
+        print(f"log: {state.get('log_file', paths['log'])}")
         return 0
 
     stop_path.write_text(datetime.now().isoformat(timespec="seconds") + "\n", encoding="utf-8")

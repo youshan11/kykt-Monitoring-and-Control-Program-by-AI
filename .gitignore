@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .sampling_state.json
 .sampling_stop
+
+web_console/runtime/
+web_console/**/__pycache__/
+web_console/**/*.pyc
