@@ -201,6 +201,26 @@ def delete_conversation(conversation_id: str) -> dict:
     return {"deleted": conversation_id, "active_conversation_id": get_active_conversation_id()}
 
 
+def get_codex_session_id(conversation_id: str | None = None) -> str | None:
+    conversation_id = conversation_id or get_active_conversation_id()
+    if not conversation_id:
+        return None
+    meta = _read_meta(conversation_id)
+    session_id = str(meta.get("codex_session_id", "")).strip()
+    return session_id or None
+
+
+def set_codex_session_id(conversation_id: str, session_id: str) -> dict:
+    session_id = session_id.strip()
+    if not session_id:
+        raise ValueError("Codex session id 不能为空")
+    meta = _read_meta(conversation_id)
+    meta["codex_session_id"] = session_id
+    meta["updated_at"] = utc_now_iso()
+    _write_meta(conversation_id, meta)
+    return meta
+
+
 def append_message(role: str, content: str, conversation_id: str | None = None) -> dict:
     ensure_runtime_dirs()
     conversation_id = conversation_id or get_active_conversation_id()

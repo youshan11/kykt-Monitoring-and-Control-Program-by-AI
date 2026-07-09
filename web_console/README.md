@@ -36,8 +36,14 @@ WEB_CONSOLE_HOST=127.0.0.1
 WEB_CONSOLE_PORT=8765
 WEB_CONSOLE_CODEX_BIN=codex
 WEB_CONSOLE_CODEX_TIMEOUT_SECONDS=600
+WEB_CONSOLE_CODEX_HISTORY_LIMIT=6
+WEB_CONSOLE_CODEX_MODEL=
+WEB_CONSOLE_CODEX_REASONING_EFFORT=low
 WEB_CONSOLE_CODEX_EXTRA_ARGS="-s workspace-write"
+WEB_CONSOLE_CODEX_RESUME_EXTRA_ARGS=
 ```
+
+每个网页对话会在 `meta.json` 中保存 `codex_session_id`，后续消息会优先使用 `codex exec resume` 复用该 Codex 会话。`WEB_CONSOLE_CODEX_HISTORY_LIMIT` 控制首次创建 Codex 会话时附带的最近网页历史条数。
 
 如果实际硬件控制或 SSH 在 Codex 沙箱内不可用，可在受控内网环境下显式改为：
 

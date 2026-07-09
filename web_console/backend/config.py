@@ -23,7 +23,28 @@ MAX_UPLOAD_BYTES = int(os.environ.get("WEB_CONSOLE_MAX_UPLOAD_BYTES", str(20 * 1
 
 CODEX_BIN = os.environ.get("WEB_CONSOLE_CODEX_BIN", "codex")
 CODEX_TIMEOUT_SECONDS = int(os.environ.get("WEB_CONSOLE_CODEX_TIMEOUT_SECONDS", "600"))
+CODEX_HISTORY_LIMIT = int(os.environ.get("WEB_CONSOLE_CODEX_HISTORY_LIMIT", "6"))
+CODEX_MODEL = os.environ.get("WEB_CONSOLE_CODEX_MODEL", "").strip()
+CODEX_REASONING_EFFORT = os.environ.get("WEB_CONSOLE_CODEX_REASONING_EFFORT", "low").strip()
 
 # Default stays reasonably constrained. Hardware/SSH deployments can override with:
 # WEB_CONSOLE_CODEX_EXTRA_ARGS="--dangerously-bypass-approvals-and-sandbox"
 CODEX_EXTRA_ARGS = shlex.split(os.environ.get("WEB_CONSOLE_CODEX_EXTRA_ARGS", "-s workspace-write"))
+CODEX_RESUME_EXTRA_ARGS = shlex.split(os.environ.get("WEB_CONSOLE_CODEX_RESUME_EXTRA_ARGS", ""))
+
+
+def _codex_model_args() -> list[str]:
+    args: list[str] = []
+    if CODEX_MODEL:
+        args.extend(["-m", CODEX_MODEL])
+    if CODEX_REASONING_EFFORT:
+        args.extend(["-c", f"model_reasoning_effort={CODEX_REASONING_EFFORT}"])
+    return args
+
+
+def codex_exec_args() -> list[str]:
+    return [*CODEX_EXTRA_ARGS, *_codex_model_args()]
+
+
+def codex_resume_args() -> list[str]:
+    return [*CODEX_RESUME_EXTRA_ARGS, *_codex_model_args()]

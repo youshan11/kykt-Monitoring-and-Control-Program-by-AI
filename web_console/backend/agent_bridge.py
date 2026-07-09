@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -8,35 +10,84 @@ import textwrap
 from . import config
 
 
+SESSION_ID_RE = re.compile(r"session id:\s*([0-9a-fA-F-]{36})")
+
+
 class AgentBridgeError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class AgentBridgeReply:
+    content: str
+    session_id: str | None = None
 
 
 class CodexCliAgentBridge:
     def __init__(self) -> None:
         self.project_root = config.PROJECT_ROOT
 
-    def chat(self, user_message: str, transcript: list[dict]) -> str:
-        prompt = self._build_prompt(user_message, transcript)
+    def chat(
+        self,
+        user_message: str,
+        transcript: list[dict],
+        session_id: str | None = None,
+    ) -> AgentBridgeReply:
+        prompt = self._build_resume_prompt(user_message) if session_id else self._build_initial_prompt(user_message, transcript)
 
         with tempfile.NamedTemporaryFile(
             mode="w+", encoding="utf-8", suffix=".txt", dir=config.RUNTIME_ROOT, delete=False
         ) as output_file:
             output_path = Path(output_file.name)
 
-        cmd = [
+        cmd = self._build_resume_command(session_id, output_path) if session_id else self._build_initial_command(output_path)
+        proc = self._run_codex(cmd, prompt)
+
+        reply = output_path.read_text(encoding="utf-8", errors="replace").strip()
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
+
+        if proc.returncode != 0:
+            detail = proc.stderr.strip() or proc.stdout.strip() or "未知错误"
+            if reply:
+                detail = f"{reply}\n\n{detail}"
+            raise AgentBridgeError(detail)
+
+        parsed_session_id = session_id or self._parse_session_id(proc.stdout) or self._parse_session_id(proc.stderr)
+        return AgentBridgeReply(
+            content=reply or proc.stdout.strip() or "(agent 没有返回文本)",
+            session_id=parsed_session_id,
+        )
+
+    def _build_initial_command(self, output_path: Path) -> list[str]:
+        return [
             config.CODEX_BIN,
             "exec",
             "-C",
             str(self.project_root),
-            *config.CODEX_EXTRA_ARGS,
+            *config.codex_exec_args(),
             "-o",
             str(output_path),
             "-",
         ]
 
+    def _build_resume_command(self, session_id: str, output_path: Path) -> list[str]:
+        return [
+            config.CODEX_BIN,
+            "exec",
+            "resume",
+            *config.codex_resume_args(),
+            "-o",
+            str(output_path),
+            session_id,
+            "-",
+        ]
+
+    def _run_codex(self, cmd: list[str], prompt: str) -> subprocess.CompletedProcess[str]:
         try:
-            proc = subprocess.run(
+            return subprocess.run(
                 cmd,
                 input=prompt,
                 text=True,
@@ -51,26 +102,18 @@ class CodexCliAgentBridge:
         except OSError as exc:
             raise AgentBridgeError(f"无法启动 agent: {exc}") from exc
 
-        reply = output_path.read_text(encoding="utf-8", errors="replace").strip()
-        try:
-            output_path.unlink()
-        except OSError:
-            pass
+    def _parse_session_id(self, stdout: str) -> str | None:
+        match = SESSION_ID_RE.search(stdout or "")
+        return match.group(1) if match else None
 
-        if proc.returncode != 0:
-            detail = proc.stderr.strip() or proc.stdout.strip() or "未知错误"
-            if reply:
-                detail = f"{reply}\n\n{detail}"
-            raise AgentBridgeError(detail)
-
-        return reply or proc.stdout.strip() or "(agent 没有返回文本)"
-
-    def _build_prompt(self, user_message: str, transcript: list[dict]) -> str:
-        recent = transcript[-20:]
-        transcript_text = "\n".join(
+    def _format_recent_transcript(self, transcript: list[dict]) -> str:
+        recent = transcript[-max(0, config.CODEX_HISTORY_LIMIT) :]
+        return "\n".join(
             f"{item.get('role', 'unknown')}: {item.get('content', '')}" for item in recent
         )
 
+    def _build_initial_prompt(self, user_message: str, transcript: list[dict]) -> str:
+        transcript_text = self._format_recent_transcript(transcript)
         return textwrap.dedent(
             f"""
             你现在是 /home/kangjs/workspace/project1 的网页后端 agent。
@@ -92,5 +135,15 @@ class CodexCliAgentBridge:
 
             本轮用户消息：
             {user_message}
+            """
+        ).strip()
+
+    def _build_resume_prompt(self, user_message: str) -> str:
+        return textwrap.dedent(
+            f"""
+            网页用户继续发送消息：
+            {user_message}
+
+            请继续遵守本会话此前的 project1 NI DAQ agent 规则，并用中文回复网页用户。
             """
         ).strip()

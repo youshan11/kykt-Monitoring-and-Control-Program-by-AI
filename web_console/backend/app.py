@@ -18,6 +18,7 @@ from .file_store import (
     delete_conversation,
     ensure_runtime_dirs,
     get_active_conversation_id,
+    get_codex_session_id,
     list_conversations,
     list_tdms_files,
     read_messages,
@@ -25,6 +26,7 @@ from .file_store import (
     resolve_tdms_download,
     save_uploaded_config,
     set_active_conversation,
+    set_codex_session_id,
 )
 
 
@@ -153,9 +155,12 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             user_msg = append_message("user", message, conversation_id=conversation_id)
             transcript = read_messages(conversation_id)
             try:
-                reply = agent_bridge.chat(message, transcript)
-                agent_msg = append_message("agent", reply, conversation_id=conversation_id)
-                self._send_json({"active_conversation_id": conversation_id, "user_message": user_msg, "agent_message": agent_msg, "conversations": list_conversations()})
+                session_id = get_codex_session_id(conversation_id)
+                bridge_reply = agent_bridge.chat(message, transcript, session_id=session_id)
+                if bridge_reply.session_id and bridge_reply.session_id != session_id:
+                    set_codex_session_id(conversation_id, bridge_reply.session_id)
+                agent_msg = append_message("agent", bridge_reply.content, conversation_id=conversation_id)
+                self._send_json({"active_conversation_id": conversation_id, "codex_session_id": bridge_reply.session_id, "user_message": user_msg, "agent_message": agent_msg, "conversations": list_conversations()})
             except AgentBridgeError as exc:
                 error_msg = append_message("system", f"agent 调用失败：{exc}", conversation_id=conversation_id)
                 self._send_json(
