@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 import json
 import mimetypes
+import re
 import threading
 
 from . import config
@@ -13,12 +14,17 @@ from .agent_bridge import AgentBridgeError, CodexCliAgentBridge
 from .file_store import (
     append_message,
     config_status,
+    create_conversation,
+    delete_conversation,
     ensure_runtime_dirs,
+    get_active_conversation_id,
+    list_conversations,
     list_tdms_files,
-    read_log,
     read_messages,
+    rename_conversation,
     resolve_tdms_download,
     save_uploaded_config,
+    set_active_conversation,
 )
 
 
@@ -41,13 +47,14 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
         elif path in ("/app.js", "/styles.css"):
             self._send_static(config.FRONTEND_ROOT / path.lstrip("/"))
         elif path == "/api/messages":
-            self._send_json({"messages": read_messages()})
+            self._send_json({"active_conversation_id": get_active_conversation_id(), "messages": read_messages()})
+        elif path == "/api/conversations":
+            self._send_json({"active_conversation_id": get_active_conversation_id(), "conversations": list_conversations()})
+        elif path.startswith("/api/conversations/") and path.endswith("/messages"):
+            conversation_id = path.split("/")[3]
+            self._send_json({"conversation_id": conversation_id, "messages": read_messages(conversation_id)})
         elif path == "/api/status":
             self._send_json(config_status())
-        elif path == "/api/log":
-            params = parse_qs(parsed.query)
-            max_bytes = int(params.get("max_bytes", ["200000"])[0])
-            self._send_json({"log": read_log(max_bytes=max_bytes)})
         elif path == "/api/tdms":
             self._send_json({"files": list_tdms_files()})
         elif path.startswith("/api/tdms/"):
@@ -62,8 +69,70 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             self._handle_chat()
         elif parsed.path == "/api/upload-config":
             self._handle_upload_config()
+        elif parsed.path == "/api/conversations":
+            self._handle_create_conversation()
+        elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/select"):
+            conversation_id = parsed.path.split("/")[3]
+            self._handle_select_conversation(conversation_id)
         else:
             self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+
+    def do_PATCH(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/conversations/"):
+            conversation_id = parsed.path.split("/")[3]
+            self._handle_rename_conversation(conversation_id)
+        else:
+            self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/conversations/"):
+            conversation_id = parsed.path.split("/")[3]
+            self._handle_delete_conversation(conversation_id)
+        else:
+            self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def _handle_create_conversation(self) -> None:
+        title = None
+        if int(self.headers.get("Content-Length", "0") or "0") > 0:
+            try:
+                payload = self._read_json_body()
+                title = str(payload.get("title", "")).strip() or None
+            except ValueError:
+                title = None
+        conversation = create_conversation(title=title)
+        self._send_json({"conversation": conversation, "conversations": list_conversations()})
+
+    def _handle_select_conversation(self, conversation_id: str) -> None:
+        try:
+            conversation = set_active_conversation(conversation_id)
+            self._send_json({"conversation": conversation, "messages": read_messages(conversation_id), "conversations": list_conversations()})
+        except FileNotFoundError:
+            self._send_error(HTTPStatus.NOT_FOUND, "对话不存在")
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def _handle_rename_conversation(self, conversation_id: str) -> None:
+        try:
+            payload = self._read_json_body()
+            title = str(payload.get("title", ""))
+            conversation = rename_conversation(conversation_id, title)
+            self._send_json({"conversation": conversation, "conversations": list_conversations()})
+        except FileNotFoundError:
+            self._send_error(HTTPStatus.NOT_FOUND, "对话不存在")
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def _handle_delete_conversation(self, conversation_id: str) -> None:
+        try:
+            result = delete_conversation(conversation_id)
+            self._send_json({**result, "messages": read_messages(), "conversations": list_conversations()})
+        except FileNotFoundError:
+            self._send_error(HTTPStatus.NOT_FOUND, "对话不存在")
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
 
     def _handle_chat(self) -> None:
         try:
@@ -80,14 +149,15 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             return
 
         try:
-            user_msg = append_message("user", message)
-            transcript = read_messages()
+            conversation_id = get_active_conversation_id()
+            user_msg = append_message("user", message, conversation_id=conversation_id)
+            transcript = read_messages(conversation_id)
             try:
                 reply = agent_bridge.chat(message, transcript)
-                agent_msg = append_message("agent", reply)
-                self._send_json({"user_message": user_msg, "agent_message": agent_msg})
+                agent_msg = append_message("agent", reply, conversation_id=conversation_id)
+                self._send_json({"active_conversation_id": conversation_id, "user_message": user_msg, "agent_message": agent_msg, "conversations": list_conversations()})
             except AgentBridgeError as exc:
-                error_msg = append_message("system", f"agent 调用失败：{exc}")
+                error_msg = append_message("system", f"agent 调用失败：{exc}", conversation_id=conversation_id)
                 self._send_json(
                     {"user_message": user_msg, "error_message": error_msg},
                     status=HTTPStatus.BAD_GATEWAY,
@@ -121,7 +191,7 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             "system",
             f"已上传并替换配置文件：{result['filename']} -> {result['active_config']}",
         )
-        self._send_json({"upload": result, "message": msg})
+        self._send_json({"upload": result, "message": msg, "conversations": list_conversations()})
 
     def _read_json_body(self) -> dict:
         content_length = int(self.headers.get("Content-Length", "0"))
@@ -141,14 +211,17 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
                 continue
             header_blob, _, data = part.partition(b"\r\n\r\n")
             headers = header_blob.decode("utf-8", errors="replace")
-            if 'name="config"' not in headers:
+            disposition = next(
+                (line for line in headers.splitlines() if line.lower().startswith("content-disposition:")),
+                "",
+            )
+            field_match = re.search(r'(?:^|;\s*)name="([^"]*)"', disposition)
+            if not field_match or field_match.group(1) != "config":
                 continue
             filename = "sampling_config.docx"
-            for segment in headers.split(";"):
-                segment = segment.strip()
-                if segment.startswith("filename="):
-                    filename = segment.split("=", 1)[1].strip().strip('"') or filename
-                    break
+            filename_match = re.search(r'(?:^|;\s*)filename="([^"]*)"', disposition)
+            if filename_match:
+                filename = filename_match.group(1) or filename
             if data.endswith(b"\r\n"):
                 data = data[:-2]
             return filename, data

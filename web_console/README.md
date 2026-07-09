@@ -1,4 +1,5 @@
 # Project1 Web Console
+# ssh -L 8765:127.0.0.1:8765 buaa-dev
 
 本目录是 `project1` 的本地 Web 外壳。网页只负责上传配置、发送自然语言消息、展示 agent 回复、读取日志和下载 TDMS；NI DAQ 核心逻辑仍由项目根目录的 `AGENTS.md`、skill 和既有脚本负责。
 
@@ -26,7 +27,7 @@ http://127.0.0.1:8765
   - 确认停止：`确认停止`
   - 查询状态：`查看当前采样状态`
 - TDMS 文件从 `data/*.tdms` 列表中下载。
-- 采集日志读取 `data/sampling.log`。
+- 对话记录保存在 `web_console/runtime/conversations/`，支持新建、切换、重命名和删除。
 
 ## 环境变量
 

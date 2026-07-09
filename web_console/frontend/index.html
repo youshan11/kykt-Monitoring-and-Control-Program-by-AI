@@ -36,7 +36,7 @@
         </form>
       </section>
 
-      <aside class="side-pane" aria-label="日志和结果">
+      <aside class="side-pane" aria-label="结果和对话记录">
         <section class="panel">
           <div class="panel-title">
             <h2>TDMS 文件</h2>
@@ -45,16 +45,16 @@
           <div id="tdmsFiles" class="file-list"></div>
         </section>
 
-        <section class="panel log-panel">
+        <section class="panel conversation-panel">
           <div class="panel-title">
-            <h2>采集日志</h2>
-            <button id="refreshLog" type="button">刷新</button>
+            <h2>对话记录</h2>
+            <button id="newConversation" type="button">新对话</button>
           </div>
-          <pre id="logOutput"></pre>
+          <div id="conversations" class="conversation-list"></div>
         </section>
       </aside>
     </main>
 
-    <script src="/app.js?v=3"></script>
+    <script src="/app.js?v=5"></script>
   </body>
 </html>

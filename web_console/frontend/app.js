@@ -5,17 +5,24 @@ const sendButton = document.getElementById("sendButton");
 const configFile = document.getElementById("configFile");
 const configStatus = document.getElementById("configStatus");
 const tdmsFiles = document.getElementById("tdmsFiles");
-const logOutput = document.getElementById("logOutput");
+const conversationsEl = document.getElementById("conversations");
+const newConversationButton = document.getElementById("newConversation");
 
 let busy = false;
 let lastMessagesJson = "";
 let refreshTimer = null;
 let pendingAgent = false;
+let pendingStartedAt = null;
+let activeConversationId = null;
 
 function setBusy(value) {
   busy = value;
   sendButton.disabled = value;
+  newConversationButton.disabled = value;
   document.querySelectorAll(".quick-actions button").forEach((button) => {
+    button.disabled = value;
+  });
+  document.querySelectorAll(".conversation-action, .conversation-open").forEach((button) => {
     button.disabled = value;
   });
 }
@@ -26,13 +33,26 @@ function formatSize(bytes) {
   return `${bytes} B`;
 }
 
+function formatElapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return seconds + " 秒";
+  const minutes = Math.floor(seconds / 60);
+  const rest = String(seconds % 60).padStart(2, "0");
+  return minutes + " 分 " + rest + " 秒";
+}
+
+function pendingMessageText() {
+  const startedAt = pendingStartedAt || Date.now();
+  return "agent 正在处理... " + formatElapsed(Date.now() - startedAt);
+}
+
 function renderMessages(messages, force = false) {
   const displayMessages = pendingAgent
     ? [
         ...(messages || []),
         {
           role: "system",
-          content: "agent 正在处理...",
+          content: pendingMessageText(),
           created_at: "",
         },
       ]
@@ -61,6 +81,45 @@ function renderMessages(messages, force = false) {
   }
 }
 
+function renderConversations(conversations) {
+  conversationsEl.innerHTML = "";
+  if (!conversations.length) {
+    conversationsEl.textContent = "暂无对话记录";
+    return;
+  }
+
+  for (const conversation of conversations) {
+    const row = document.createElement("div");
+    row.className = `conversation-row ${conversation.active ? "active" : ""}`;
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "conversation-open";
+    open.textContent = conversation.title || conversation.id;
+    open.title = conversation.updated_at || "";
+    open.addEventListener("click", () => selectConversation(conversation.id));
+
+    const meta = document.createElement("span");
+    meta.className = "conversation-meta";
+    meta.textContent = `${conversation.message_count || 0} 条`;
+
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.className = "conversation-action";
+    rename.textContent = "重命名";
+    rename.addEventListener("click", () => renameConversation(conversation));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "conversation-action danger";
+    remove.textContent = "删除";
+    remove.addEventListener("click", () => deleteConversation(conversation));
+
+    row.append(open, meta, rename, remove);
+    conversationsEl.appendChild(row);
+  }
+}
+
 async function requestJson(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({}));
@@ -72,7 +131,14 @@ async function requestJson(url, options) {
 
 async function loadMessages() {
   const payload = await requestJson("/api/messages");
+  activeConversationId = payload.active_conversation_id || activeConversationId;
   renderMessages(payload.messages || []);
+}
+
+async function loadConversations() {
+  const payload = await requestJson("/api/conversations");
+  activeConversationId = payload.active_conversation_id || activeConversationId;
+  renderConversations(payload.conversations || []);
 }
 
 function appendLocalMessage(role, content) {
@@ -86,7 +152,7 @@ function appendLocalMessage(role, content) {
 }
 
 async function refreshDynamicContent() {
-  await Promise.all([loadMessages(), loadLog(), loadTdms(), loadStatus()]);
+  await Promise.all([loadMessages(), loadTdms(), loadStatus(), loadConversations()]);
 }
 
 function startAutoRefresh(intervalMs = 2000) {
@@ -110,11 +176,6 @@ async function loadStatus() {
     : "当前配置不存在";
 }
 
-async function loadLog() {
-  const payload = await requestJson("/api/log");
-  logOutput.textContent = payload.log || "暂无日志";
-}
-
 async function loadTdms() {
   const payload = await requestJson("/api/tdms");
   const files = payload.files || [];
@@ -136,10 +197,11 @@ async function sendMessage(message) {
   if (!message || busy) return;
   appendLocalMessage("user", message);
   pendingAgent = true;
+  pendingStartedAt = Date.now();
   renderMessages(JSON.parse(lastMessagesJson), true);
   inputEl.value = "";
   setBusy(true);
-  startAutoRefresh(1500);
+  startAutoRefresh(1000);
   try {
     await requestJson("/api/chat", {
       method: "POST",
@@ -152,10 +214,59 @@ async function sendMessage(message) {
     await loadMessages().catch(() => {});
   } finally {
     pendingAgent = false;
+    pendingStartedAt = null;
     setBusy(false);
     stopAutoRefresh();
     await refreshDynamicContent().catch(() => {});
   }
+}
+
+async function createNewConversation() {
+  if (busy) return;
+  const payload = await requestJson("/api/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  activeConversationId = payload.conversation.id;
+  lastMessagesJson = "";
+  renderMessages([], true);
+  await loadConversations();
+}
+
+async function selectConversation(conversationId) {
+  if (busy || conversationId === activeConversationId) return;
+  const payload = await requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/select`, {
+    method: "POST",
+  });
+  activeConversationId = payload.conversation.id;
+  lastMessagesJson = "";
+  renderMessages(payload.messages || [], true);
+  renderConversations(payload.conversations || []);
+}
+
+async function renameConversation(conversation) {
+  if (busy) return;
+  const title = prompt("输入新的对话名称", conversation.title || "");
+  if (title === null) return;
+  const payload = await requestJson(`/api/conversations/${encodeURIComponent(conversation.id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  renderConversations(payload.conversations || []);
+}
+
+async function deleteConversation(conversation) {
+  if (busy) return;
+  if (!confirm(`删除对话“${conversation.title || conversation.id}”？`)) return;
+  const payload = await requestJson(`/api/conversations/${encodeURIComponent(conversation.id)}`, {
+    method: "DELETE",
+  });
+  activeConversationId = payload.active_conversation_id || activeConversationId;
+  lastMessagesJson = "";
+  renderMessages(payload.messages || [], true);
+  renderConversations(payload.conversations || []);
 }
 
 formEl.addEventListener("submit", (event) => {
@@ -167,16 +278,20 @@ document.querySelectorAll(".quick-actions button").forEach((button) => {
   button.addEventListener("click", () => sendMessage(button.dataset.message));
 });
 
+newConversationButton.addEventListener("click", () => {
+  createNewConversation().catch((error) => alert(error.message));
+});
+
 configFile.addEventListener("change", async () => {
   const file = configFile.files[0];
   if (!file) return;
   const form = new FormData();
   form.append("config", file);
   setBusy(true);
-  startAutoRefresh(1500);
+  startAutoRefresh(1000);
   try {
     await requestJson("/api/upload-config", { method: "POST", body: form });
-    await Promise.all([loadMessages(), loadStatus()]);
+    await Promise.all([loadMessages(), loadStatus(), loadConversations()]);
   } catch (error) {
     alert(error.message);
   } finally {
@@ -187,9 +302,8 @@ configFile.addEventListener("change", async () => {
 });
 
 document.getElementById("refreshFiles").addEventListener("click", loadTdms);
-document.getElementById("refreshLog").addEventListener("click", loadLog);
 
-Promise.all([loadMessages(), loadStatus(), loadLog(), loadTdms()]).catch((error) => {
+Promise.all([loadMessages(), loadStatus(), loadTdms(), loadConversations()]).catch((error) => {
   console.error(error);
 });
 

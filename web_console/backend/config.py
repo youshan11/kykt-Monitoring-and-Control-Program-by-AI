@@ -14,6 +14,8 @@ CONFIG_DOCX = PROJECT_ROOT / "sampling_config.docx"
 DATA_DIR = PROJECT_ROOT / "data"
 LOG_FILE = DATA_DIR / "sampling.log"
 MESSAGES_FILE = RUNTIME_ROOT / "messages.jsonl"
+CONVERSATIONS_ROOT = RUNTIME_ROOT / "conversations"
+ACTIVE_CONVERSATION_FILE = RUNTIME_ROOT / "active_conversation.txt"
 
 HOST = os.environ.get("WEB_CONSOLE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("WEB_CONSOLE_PORT", "8765"))
