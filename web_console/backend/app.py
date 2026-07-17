@@ -19,12 +19,14 @@ from .file_store import (
     ensure_runtime_dirs,
     get_active_conversation_id,
     get_codex_session_id,
+    list_config_history,
     list_conversations,
     list_tdms_files,
     read_messages,
     rename_conversation,
     resolve_tdms_download,
     save_uploaded_config,
+    select_config_history,
     set_active_conversation,
     set_codex_session_id,
 )
@@ -57,6 +59,8 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             self._send_json({"conversation_id": conversation_id, "messages": read_messages(conversation_id)})
         elif path == "/api/status":
             self._send_json(config_status())
+        elif path == "/api/config-history":
+            self._send_json({"configs": list_config_history()})
         elif path == "/api/tdms":
             self._send_json({"files": list_tdms_files()})
         elif path.startswith("/api/tdms/"):
@@ -71,6 +75,9 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             self._handle_chat()
         elif parsed.path == "/api/upload-config":
             self._handle_upload_config()
+        elif parsed.path.startswith("/api/config-history/") and parsed.path.endswith("/select"):
+            config_id = unquote(parsed.path.removeprefix("/api/config-history/").removesuffix("/select"))
+            self._handle_select_config_history(config_id)
         elif parsed.path == "/api/conversations":
             self._handle_create_conversation()
         elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/select"):
@@ -169,6 +176,28 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
                 )
         finally:
             agent_lock.release()
+
+    def _handle_select_config_history(self, config_id: str) -> None:
+        try:
+            result = select_config_history(config_id)
+        except FileNotFoundError:
+            self._send_error(HTTPStatus.NOT_FOUND, "配置历史不存在")
+            return
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+
+        msg = append_message(
+            "system",
+            f"已切换当前配置文件：{result['filename']} -> {result['active_config']}",
+        )
+        self._send_json({
+            "config": result,
+            "status": config_status(),
+            "configs": list_config_history(),
+            "message": msg,
+            "conversations": list_conversations(),
+        })
 
     def _handle_upload_config(self) -> None:
         content_length = int(self.headers.get("Content-Length", "0"))

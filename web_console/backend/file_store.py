@@ -259,6 +259,169 @@ def read_messages(conversation_id: str | None = None, limit: int = 200) -> list[
     return messages
 
 
+def _read_config_meta() -> dict:
+    if not config.CONFIG_META_FILE.exists():
+        return {}
+    try:
+        data = json.loads(config.CONFIG_META_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_config_meta(
+    display_filename: str,
+    source_path: Path | None = None,
+    history_id: str | None = None,
+    uploaded_at: str | None = None,
+) -> None:
+    meta = {
+        "display_filename": display_filename,
+        "active_config": str(config.CONFIG_DOCX),
+        "selected_at": utc_now_iso(),
+    }
+    if source_path is not None:
+        meta["source_path"] = str(source_path)
+        meta["source_stored_name"] = source_path.name
+    if history_id:
+        meta["history_id"] = history_id
+    if uploaded_at:
+        meta["uploaded_at"] = uploaded_at
+    config.CONFIG_META_FILE.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _read_config_display_filename() -> str:
+    display_filename = str(_read_config_meta().get("display_filename", "")).strip()
+    return display_filename or config.CONFIG_DOCX.name
+
+
+def _read_config_history_records() -> list[dict]:
+    if not config.CONFIG_HISTORY_FILE.exists():
+        return []
+    try:
+        data = json.loads(config.CONFIG_HISTORY_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _write_config_history_records(records: list[dict]) -> None:
+    config.CONFIG_HISTORY_FILE.write_text(
+        json.dumps(records, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _upload_timestamp_iso(path: Path) -> str:
+    match = re.match(r"^(\d{8})_(\d{6})_", path.name)
+    if match:
+        try:
+            dt = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+            return dt.replace(tzinfo=timezone.utc).isoformat(timespec="seconds")
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+
+
+def _display_filename_from_upload(path: Path) -> str:
+    match = re.match(r"^\d{8}_\d{6}_(?:[a-f0-9]{8}_)?(.+)$", path.name)
+    return match.group(1) if match else path.name
+
+
+def _normalize_config_history_record(record: dict, upload_path: Path | None = None) -> dict | None:
+    stored_name = str(record.get("stored_name") or record.get("id") or "").strip()
+    if not stored_name and upload_path is not None:
+        stored_name = upload_path.name
+    if not stored_name:
+        return None
+    if Path(stored_name).name != stored_name or not stored_name.lower().endswith(".docx"):
+        return None
+    path = upload_path or config.UPLOAD_ROOT / stored_name
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    filename = str(record.get("filename") or _display_filename_from_upload(path)).strip() or path.name
+    uploaded_at = str(record.get("uploaded_at") or _upload_timestamp_iso(path)).strip()
+    return {
+        "id": stored_name,
+        "filename": filename,
+        "stored_name": stored_name,
+        "stored_path": str(path),
+        "uploaded_at": uploaded_at,
+        "size": int(record.get("size") or stat.st_size),
+    }
+
+
+def _append_config_history(record: dict) -> dict:
+    records = _read_config_history_records()
+    records = [item for item in records if item.get("stored_name") != record["stored_name"]]
+    records.append(record)
+    _write_config_history_records(records)
+    return record
+
+
+def list_config_history() -> list[dict]:
+    ensure_runtime_dirs_without_active()
+    active_meta = _read_config_meta()
+    active_stored_name = str(active_meta.get("source_stored_name", "")).strip()
+    by_stored_name: dict[str, dict] = {}
+
+    for record in _read_config_history_records():
+        normalized = _normalize_config_history_record(record)
+        if normalized:
+            by_stored_name[normalized["stored_name"]] = normalized
+
+    for path in config.UPLOAD_ROOT.glob("*.docx") if config.UPLOAD_ROOT.exists() else []:
+        normalized = _normalize_config_history_record({}, upload_path=path)
+        if normalized and normalized["stored_name"] not in by_stored_name:
+            by_stored_name[normalized["stored_name"]] = normalized
+
+    history = list(by_stored_name.values())
+    for record in history:
+        record["active"] = bool(active_stored_name and record["stored_name"] == active_stored_name)
+    history.sort(key=lambda item: item.get("uploaded_at", ""), reverse=True)
+    return history
+
+
+def _resolve_config_history_record(config_id: str) -> dict:
+    config_id = config_id.strip()
+    if Path(config_id).name != config_id or not config_id.lower().endswith(".docx"):
+        raise ValueError("非法配置历史 ID")
+    for record in list_config_history():
+        if record["id"] == config_id:
+            return record
+    raise FileNotFoundError(config_id)
+
+
+def select_config_history(config_id: str) -> dict:
+    ensure_runtime_dirs()
+    record = _resolve_config_history_record(config_id)
+    source_path = Path(record["stored_path"])
+
+    stamp = timestamp()
+    backup_path = None
+    if config.CONFIG_DOCX.exists():
+        backup_path = config.BACKUP_ROOT / f"sampling_config_{stamp}.docx"
+        shutil.copy2(config.CONFIG_DOCX, backup_path)
+
+    shutil.copy2(source_path, config.CONFIG_DOCX)
+    _write_config_meta(
+        record["filename"],
+        source_path=source_path,
+        history_id=record["id"],
+        uploaded_at=record["uploaded_at"],
+    )
+
+    return {
+        **record,
+        "backup_path": str(backup_path) if backup_path else None,
+        "active_config": str(config.CONFIG_DOCX),
+    }
+
+
 def save_uploaded_config(filename: str, data: bytes) -> dict:
     ensure_runtime_dirs()
     if not filename.lower().endswith(".docx"):
@@ -269,8 +432,21 @@ def save_uploaded_config(filename: str, data: bytes) -> dict:
         raise ValueError("上传文件超过大小限制")
 
     stamp = timestamp()
-    upload_path = config.UPLOAD_ROOT / f"{stamp}_{Path(filename).name}"
+    uploaded_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    display_filename = Path(filename).name
+    upload_path = config.UPLOAD_ROOT / f"{stamp}_{uuid.uuid4().hex[:8]}_{display_filename}"
     upload_path.write_bytes(data)
+
+    history_record = _append_config_history(
+        {
+            "id": upload_path.name,
+            "filename": display_filename,
+            "stored_name": upload_path.name,
+            "stored_path": str(upload_path),
+            "uploaded_at": uploaded_at,
+            "size": len(data),
+        }
+    )
 
     backup_path = None
     if config.CONFIG_DOCX.exists():
@@ -278,12 +454,20 @@ def save_uploaded_config(filename: str, data: bytes) -> dict:
         shutil.copy2(config.CONFIG_DOCX, backup_path)
 
     shutil.copy2(upload_path, config.CONFIG_DOCX)
+    _write_config_meta(
+        display_filename,
+        source_path=upload_path,
+        history_id=history_record["id"],
+        uploaded_at=uploaded_at,
+    )
 
     return {
-        "filename": Path(filename).name,
+        "filename": display_filename,
         "uploaded_path": str(upload_path),
         "backup_path": str(backup_path) if backup_path else None,
         "active_config": str(config.CONFIG_DOCX),
+        "history_id": history_record["id"],
+        "uploaded_at": uploaded_at,
         "size": len(data),
     }
 
@@ -330,6 +514,8 @@ def config_status() -> dict:
     return {
         "project_root": str(config.PROJECT_ROOT),
         "active_config": str(config.CONFIG_DOCX),
+        "display_filename": _read_config_display_filename(),
+        "active_history_id": str(_read_config_meta().get("history_id", "")).strip() or None,
         "config_exists": stat is not None,
         "config_size": stat.st_size if stat else 0,
         "config_modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(

@@ -185,7 +185,7 @@ textarea {
 
 .side-pane {
   display: grid;
-  grid-template-rows: 260px minmax(0, 1fr);
+  grid-template-rows: 220px 240px minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -222,8 +222,56 @@ textarea {
   border-color: var(--accent);
 }
 
-.conversation-list {
+.conversation-list,
+.config-history-list {
   overflow: auto;
+}
+
+.config-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  padding: 8px;
+}
+
+.config-history-row.active {
+  border-color: var(--accent);
+  background: #eef8f5;
+}
+
+.config-history-info {
+  min-width: 0;
+}
+
+.config-history-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.config-history-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.config-history-active {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.config-history-select {
+  font-size: 12px;
+  padding: 8px;
 }
 
 .conversation-row {
@@ -277,7 +325,7 @@ textarea {
   }
 
   .side-pane {
-    grid-template-rows: 240px 360px;
+    grid-template-rows: 220px 260px 360px;
   }
 }
 

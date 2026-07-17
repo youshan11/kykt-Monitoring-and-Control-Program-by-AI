@@ -16,6 +16,8 @@ LOG_FILE = DATA_DIR / "sampling.log"
 MESSAGES_FILE = RUNTIME_ROOT / "messages.jsonl"
 CONVERSATIONS_ROOT = RUNTIME_ROOT / "conversations"
 ACTIVE_CONVERSATION_FILE = RUNTIME_ROOT / "active_conversation.txt"
+CONFIG_META_FILE = RUNTIME_ROOT / "config_meta.json"
+CONFIG_HISTORY_FILE = RUNTIME_ROOT / "config_history.json"
 
 HOST = os.environ.get("WEB_CONSOLE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("WEB_CONSOLE_PORT", "8765"))

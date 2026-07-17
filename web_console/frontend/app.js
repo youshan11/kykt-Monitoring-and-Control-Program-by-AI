@@ -6,6 +6,7 @@ const configFile = document.getElementById("configFile");
 const configStatus = document.getElementById("configStatus");
 const tdmsFiles = document.getElementById("tdmsFiles");
 const conversationsEl = document.getElementById("conversations");
+const configHistoryEl = document.getElementById("configHistory");
 const newConversationButton = document.getElementById("newConversation");
 
 let busy = false;
@@ -22,7 +23,7 @@ function setBusy(value) {
   document.querySelectorAll(".quick-actions button").forEach((button) => {
     button.disabled = value;
   });
-  document.querySelectorAll(".conversation-action, .conversation-open").forEach((button) => {
+  document.querySelectorAll(".conversation-action, .conversation-open, .config-history-select").forEach((button) => {
     button.disabled = value;
   });
 }
@@ -31,6 +32,20 @@ function formatSize(bytes) {
   if (bytes > 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes > 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${bytes} B`;
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function formatElapsed(ms) {
@@ -120,6 +135,49 @@ function renderConversations(conversations) {
   }
 }
 
+function renderConfigHistory(configs) {
+  configHistoryEl.innerHTML = "";
+  if (!configs.length) {
+    configHistoryEl.textContent = "暂无配置历史";
+    return;
+  }
+
+  for (const config of configs) {
+    const row = document.createElement("div");
+    row.className = `config-history-row ${config.active ? "active" : ""}`;
+
+    const info = document.createElement("div");
+    info.className = "config-history-info";
+
+    const name = document.createElement("div");
+    name.className = "config-history-name";
+    name.textContent = config.filename || config.id;
+    name.title = config.filename || config.id;
+
+    const meta = document.createElement("div");
+    meta.className = "config-history-meta";
+    meta.textContent = `${formatDate(config.uploaded_at)} · ${formatSize(config.size || 0)}`;
+
+    info.append(name, meta);
+
+    if (config.active) {
+      const active = document.createElement("span");
+      active.className = "config-history-active";
+      active.textContent = "当前";
+      row.append(info, active);
+    } else {
+      const select = document.createElement("button");
+      select.type = "button";
+      select.className = "config-history-select";
+      select.textContent = "使用";
+      select.addEventListener("click", () => selectConfigHistory(config));
+      row.append(info, select);
+    }
+
+    configHistoryEl.appendChild(row);
+  }
+}
+
 async function requestJson(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({}));
@@ -141,6 +199,11 @@ async function loadConversations() {
   renderConversations(payload.conversations || []);
 }
 
+async function loadConfigHistory() {
+  const payload = await requestJson("/api/config-history");
+  renderConfigHistory(payload.configs || []);
+}
+
 function appendLocalMessage(role, content) {
   const messages = lastMessagesJson ? JSON.parse(lastMessagesJson) : [];
   messages.push({
@@ -152,7 +215,7 @@ function appendLocalMessage(role, content) {
 }
 
 async function refreshDynamicContent() {
-  await Promise.all([loadMessages(), loadTdms(), loadStatus(), loadConversations()]);
+  await Promise.all([loadMessages(), loadTdms(), loadStatus(), loadConfigHistory(), loadConversations()]);
 }
 
 function startAutoRefresh(intervalMs = 2000) {
@@ -170,7 +233,7 @@ function stopAutoRefresh() {
 
 async function loadStatus() {
   const status = await requestJson("/api/status");
-  const name = status.active_config ? status.active_config.split("/").pop() : "sampling_config.docx";
+  const name = status.display_filename || (status.active_config ? status.active_config.split("/").pop() : "sampling_config.docx");
   configStatus.textContent = status.config_exists
     ? `当前配置：${name} · ${formatSize(status.config_size)}`
     : "当前配置不存在";
@@ -190,6 +253,23 @@ async function loadTdms() {
     row.href = `/api/tdms/${encodeURIComponent(file.name)}`;
     row.textContent = `${file.name} · ${formatSize(file.size)}`;
     tdmsFiles.appendChild(row);
+  }
+}
+
+async function selectConfigHistory(config) {
+  if (busy || config.active) return;
+  setBusy(true);
+  startAutoRefresh(1000);
+  try {
+    await requestJson(`/api/config-history/${encodeURIComponent(config.id)}/select`, {
+      method: "POST",
+    });
+    await Promise.all([loadMessages(), loadStatus(), loadConfigHistory(), loadConversations()]);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    setBusy(false);
+    stopAutoRefresh();
   }
 }
 
@@ -291,7 +371,7 @@ configFile.addEventListener("change", async () => {
   startAutoRefresh(1000);
   try {
     await requestJson("/api/upload-config", { method: "POST", body: form });
-    await Promise.all([loadMessages(), loadStatus(), loadConversations()]);
+    await Promise.all([loadMessages(), loadStatus(), loadConfigHistory(), loadConversations()]);
   } catch (error) {
     alert(error.message);
   } finally {
@@ -303,7 +383,7 @@ configFile.addEventListener("change", async () => {
 
 document.getElementById("refreshFiles").addEventListener("click", loadTdms);
 
-Promise.all([loadMessages(), loadStatus(), loadTdms(), loadConversations()]).catch((error) => {
+Promise.all([loadMessages(), loadStatus(), loadTdms(), loadConfigHistory(), loadConversations()]).catch((error) => {
   console.error(error);
 });
 
