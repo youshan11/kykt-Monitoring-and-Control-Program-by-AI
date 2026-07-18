@@ -32,8 +32,13 @@ class CodexCliAgentBridge:
         user_message: str,
         transcript: list[dict],
         session_id: str | None = None,
+        config_draft: dict | None = None,
     ) -> AgentBridgeReply:
-        prompt = self._build_resume_prompt(user_message) if session_id else self._build_initial_prompt(user_message, transcript)
+        prompt = (
+            self._build_resume_prompt(user_message, config_draft)
+            if session_id
+            else self._build_initial_prompt(user_message, transcript, config_draft)
+        )
 
         with tempfile.NamedTemporaryFile(
             mode="w+", encoding="utf-8", suffix=".txt", dir=config.RUNTIME_ROOT, delete=False
@@ -112,8 +117,26 @@ class CodexCliAgentBridge:
             f"{item.get('role', 'unknown')}: {item.get('content', '')}" for item in recent
         )
 
-    def _build_initial_prompt(self, user_message: str, transcript: list[dict]) -> str:
+    def _format_config_draft_instructions(self, config_draft: dict | None) -> str:
+        if not config_draft or not config_draft.get("active"):
+            return ""
+        draft_path = config_draft.get("draft_path", "")
+        return textwrap.dedent(
+            f"""
+            当前处于网页配置修改模式：
+            - 未确认草稿 Word 文档：{draft_path}
+            - 正式配置文档 project1/sampling_config.docx 在用户确认修改前不能改动。
+            - 本轮如果要修改采样配置，只能修改上面的草稿 Word 文档。
+            - 修改后必须运行：python3 .agents/skills/ni-daq-sampling-control/scripts/ni_daq_sampling_control.py validate --config {draft_path}
+            - 修改后必须把草稿中的完整 sampling-config TOML 配置发给用户确认。
+            - 用户发送“确认修改”“修改完成”或点击确认按钮后，网页后端会保存草稿；你不要自行把草稿复制到正式配置。
+            - 草稿确认前，不能启动采样；如果用户要求开始采样，提醒其先确认或放弃配置修改。
+            """
+        ).strip()
+
+    def _build_initial_prompt(self, user_message: str, transcript: list[dict], config_draft: dict | None = None) -> str:
         transcript_text = self._format_recent_transcript(transcript)
+        draft_instructions = self._format_config_draft_instructions(config_draft)
         return textwrap.dedent(
             f"""
             你现在是 /home/kangjs/workspace/project1 的网页后端 agent。
@@ -125,10 +148,21 @@ class CodexCliAgentBridge:
             重要约束：
             - 核心逻辑仍由 project1 和项目内 skill/脚本负责。
             - 网页上传的配置已经替换为 project1/sampling_config.docx。
+            - 如果用户提出采样配置修改想法，网页后端会进入配置修改模式；
+              有草稿路径时必须修改草稿 Word 文档，没有草稿路径时才以
+              project1/sampling_config.docx 作为当前正式配置入口。
+            - 不要把 sampling_config.md、对话草稿或记忆当作生效配置。
+            - 每次修改配置文档后，先校验配置，再把完整采样配置发给用户确认；
+              如果用户继续提出修改，继续从当前草稿 Word 文档修改并重发完整配置，
+              直到用户确认没有问题。
             - 如果用户要求开始或停止采样，仍要遵守项目规则：先总结并要求确认；
               只有收到“确认启动”“确认开始”“确认停止”“确认终止”或“y”后才能执行。
+            - 如果用户把修改配置和开始采样放在同一句话里，先完成配置确认闭环，
+              再单独请求开始采样确认。
             - 不要修改 web_console 代码，除非用户明确要求开发网页本身。
             - 回复应面向网页用户，优先使用中文，清晰说明你做了什么、下一步需要什么。
+
+            {draft_instructions}
 
             最近网页对话记录：
             {transcript_text or "(无)"}
@@ -138,12 +172,16 @@ class CodexCliAgentBridge:
             """
         ).strip()
 
-    def _build_resume_prompt(self, user_message: str) -> str:
+    def _build_resume_prompt(self, user_message: str, config_draft: dict | None = None) -> str:
+        draft_instructions = self._format_config_draft_instructions(config_draft)
         return textwrap.dedent(
             f"""
             网页用户继续发送消息：
             {user_message}
 
             请继续遵守本会话此前的 project1 NI DAQ agent 规则，并用中文回复网页用户。
+            {draft_instructions}
+            如果本轮涉及采样配置修改，必须修改当前草稿 Word 文档；没有草稿时才读取正式 project1/sampling_config.docx。
+            校验后发送完整采样配置给用户确认，并按用户反馈继续修改直到确认无误。
             """
         ).strip()

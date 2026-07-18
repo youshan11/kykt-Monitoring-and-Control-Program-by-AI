@@ -51,6 +51,8 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) 380px;
   gap: 16px;
   height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   padding: 16px;
 }
 
@@ -60,15 +62,18 @@ button:disabled {
 }
 
 .chat-pane {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar,
 .panel,
-.composer,
-.quick-actions {
+.bottom-controls,
+.draft-banner {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -107,7 +112,56 @@ h2 {
   display: none;
 }
 
+.upload-button.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.draft-banner {
+  align-items: center;
+  border-color: #b54708;
+  background: #fff8e6;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.draft-banner[hidden] {
+  display: none;
+}
+
+.draft-banner strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.draft-banner p {
+  color: #7a4b00;
+  font-size: 13px;
+}
+
+.draft-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.draft-actions button:first-child {
+  background: #b54708;
+  border-color: #b54708;
+  color: #fff;
+}
+
+.draft-actions button:first-child:hover {
+  background: #93370d;
+}
+
 .messages {
+  flex: 1 1 auto;
+  min-height: 280px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -146,11 +200,25 @@ h2 {
   line-height: 1.55;
 }
 
+.bottom-controls {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
 .quick-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 10px;
+  min-height: 36px;
+}
+
+.quick-actions button {
+  min-height: 36px;
+  min-width: 86px;
+  white-space: nowrap;
 }
 
 .quick-actions button:first-child,
@@ -169,17 +237,20 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;
   gap: 10px;
-  padding: 10px;
+  min-height: 64px;
 }
 
 textarea {
   width: 100%;
-  min-height: 58px;
-  resize: vertical;
+  height: 64px;
+  min-height: 64px;
+  max-height: 64px;
+  resize: none;
   border: 1px solid var(--border);
   border-radius: 6px;
   font: inherit;
   line-height: 1.45;
+  overflow: auto;
   padding: 10px;
 }
 
@@ -318,6 +389,12 @@ textarea {
     grid-template-columns: 1fr;
     height: auto;
     min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .chat-pane {
+    min-height: 720px;
   }
 
   .messages {

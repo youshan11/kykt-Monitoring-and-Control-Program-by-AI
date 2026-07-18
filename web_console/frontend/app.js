@@ -8,6 +8,10 @@ const tdmsFiles = document.getElementById("tdmsFiles");
 const conversationsEl = document.getElementById("conversations");
 const configHistoryEl = document.getElementById("configHistory");
 const newConversationButton = document.getElementById("newConversation");
+const configDraftBanner = document.getElementById("configDraftBanner");
+const configDraftText = document.getElementById("configDraftText");
+const confirmConfigDraftButton = document.getElementById("confirmConfigDraft");
+const discardConfigDraftButton = document.getElementById("discardConfigDraft");
 
 let busy = false;
 let lastMessagesJson = "";
@@ -15,17 +19,32 @@ let refreshTimer = null;
 let pendingAgent = false;
 let pendingStartedAt = null;
 let activeConversationId = null;
+let currentConfigDraft = { active: false };
+
+function hasActiveDraft() {
+  return Boolean(currentConfigDraft && currentConfigDraft.active);
+}
+
+function updateControls() {
+  const draftActive = hasActiveDraft();
+  sendButton.disabled = busy;
+  newConversationButton.disabled = busy || draftActive;
+  configFile.disabled = busy || draftActive;
+  document.querySelector(".upload-button")?.classList.toggle("disabled", busy || draftActive);
+
+  document.querySelectorAll(".quick-actions button").forEach((button) => {
+    button.disabled = busy || (draftActive && button.dataset.blockDraft === "true");
+  });
+  document.querySelectorAll(".conversation-action, .conversation-open, .config-history-select").forEach((button) => {
+    button.disabled = busy || draftActive;
+  });
+  confirmConfigDraftButton.disabled = busy || !draftActive;
+  discardConfigDraftButton.disabled = busy || !draftActive;
+}
 
 function setBusy(value) {
   busy = value;
-  sendButton.disabled = value;
-  newConversationButton.disabled = value;
-  document.querySelectorAll(".quick-actions button").forEach((button) => {
-    button.disabled = value;
-  });
-  document.querySelectorAll(".conversation-action, .conversation-open, .config-history-select").forEach((button) => {
-    button.disabled = value;
-  });
+  updateControls();
 }
 
 function formatSize(bytes) {
@@ -54,6 +73,22 @@ function formatElapsed(ms) {
   const minutes = Math.floor(seconds / 60);
   const rest = String(seconds % 60).padStart(2, "0");
   return minutes + " 分 " + rest + " 秒";
+}
+
+function renderConfigDraft(draft) {
+  currentConfigDraft = draft && draft.active ? draft : { active: false };
+  if (!hasActiveDraft()) {
+    configDraftBanner.hidden = true;
+    configDraftText.textContent = "";
+    updateControls();
+    return;
+  }
+
+  const baseName = currentConfigDraft.base_display_filename || "sampling_config.docx";
+  const size = currentConfigDraft.size ? ` · ${formatSize(currentConfigDraft.size)}` : "";
+  configDraftText.textContent = `基于 ${baseName} 的草稿未保存${size}。确认前不能启动采样、上传配置或切换配置历史。`;
+  configDraftBanner.hidden = false;
+  updateControls();
 }
 
 function pendingMessageText() {
@@ -133,6 +168,7 @@ function renderConversations(conversations) {
     row.append(open, meta, rename, remove);
     conversationsEl.appendChild(row);
   }
+  updateControls();
 }
 
 function renderConfigHistory(configs) {
@@ -176,6 +212,7 @@ function renderConfigHistory(configs) {
 
     configHistoryEl.appendChild(row);
   }
+  updateControls();
 }
 
 async function requestJson(url, options) {
@@ -233,9 +270,10 @@ function stopAutoRefresh() {
 
 async function loadStatus() {
   const status = await requestJson("/api/status");
+  renderConfigDraft(status.config_draft || { active: false });
   const name = status.display_filename || (status.active_config ? status.active_config.split("/").pop() : "sampling_config.docx");
   configStatus.textContent = status.config_exists
-    ? `当前配置：${name} · ${formatSize(status.config_size)}`
+    ? `当前配置：${name} · ${formatSize(status.config_size)}${hasActiveDraft() ? " · 有未保存草稿" : ""}`
     : "当前配置不存在";
 }
 
@@ -258,6 +296,10 @@ async function loadTdms() {
 
 async function selectConfigHistory(config) {
   if (busy || config.active) return;
+  if (hasActiveDraft()) {
+    alert("当前有未确认的配置草稿，请先确认或放弃修改。");
+    return;
+  }
   setBusy(true);
   startAutoRefresh(1000);
   try {
@@ -303,6 +345,10 @@ async function sendMessage(message) {
 
 async function createNewConversation() {
   if (busy) return;
+  if (hasActiveDraft()) {
+    alert("当前有未确认的配置草稿，请先确认或放弃修改。");
+    return;
+  }
   const payload = await requestJson("/api/conversations", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -316,6 +362,10 @@ async function createNewConversation() {
 
 async function selectConversation(conversationId) {
   if (busy || conversationId === activeConversationId) return;
+  if (hasActiveDraft()) {
+    alert("当前有未确认的配置草稿，请先确认或放弃修改。");
+    return;
+  }
   const payload = await requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/select`, {
     method: "POST",
   });
@@ -327,6 +377,10 @@ async function selectConversation(conversationId) {
 
 async function renameConversation(conversation) {
   if (busy) return;
+  if (hasActiveDraft()) {
+    alert("当前有未确认的配置草稿，请先确认或放弃修改。");
+    return;
+  }
   const title = prompt("输入新的对话名称", conversation.title || "");
   if (title === null) return;
   const payload = await requestJson(`/api/conversations/${encodeURIComponent(conversation.id)}`, {
@@ -339,6 +393,10 @@ async function renameConversation(conversation) {
 
 async function deleteConversation(conversation) {
   if (busy) return;
+  if (hasActiveDraft()) {
+    alert("当前有未确认的配置草稿，请先确认或放弃修改。");
+    return;
+  }
   if (!confirm(`删除对话“${conversation.title || conversation.id}”？`)) return;
   const payload = await requestJson(`/api/conversations/${encodeURIComponent(conversation.id)}`, {
     method: "DELETE",
@@ -347,6 +405,45 @@ async function deleteConversation(conversation) {
   lastMessagesJson = "";
   renderMessages(payload.messages || [], true);
   renderConversations(payload.conversations || []);
+}
+
+async function confirmConfigDraft() {
+  if (busy || !hasActiveDraft()) return;
+  const defaultName = currentConfigDraft.suggested_filename || `sampling_config_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.docx`;
+  const filename = prompt("输入新配置文件名", defaultName);
+  if (filename === null) return;
+  setBusy(true);
+  startAutoRefresh(1000);
+  try {
+    await requestJson("/api/config-draft/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename }),
+    });
+    await refreshDynamicContent();
+  } catch (error) {
+    alert(error.message);
+    await refreshDynamicContent().catch(() => {});
+  } finally {
+    setBusy(false);
+    stopAutoRefresh();
+  }
+}
+
+async function discardConfigDraft() {
+  if (busy || !hasActiveDraft()) return;
+  if (!confirm("放弃本次配置修改？正式配置不会改变。")) return;
+  setBusy(true);
+  startAutoRefresh(1000);
+  try {
+    await requestJson("/api/config-draft/discard", { method: "POST" });
+    await refreshDynamicContent();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    setBusy(false);
+    stopAutoRefresh();
+  }
 }
 
 formEl.addEventListener("submit", (event) => {
@@ -362,9 +459,22 @@ newConversationButton.addEventListener("click", () => {
   createNewConversation().catch((error) => alert(error.message));
 });
 
+confirmConfigDraftButton.addEventListener("click", () => {
+  confirmConfigDraft().catch((error) => alert(error.message));
+});
+
+discardConfigDraftButton.addEventListener("click", () => {
+  discardConfigDraft().catch((error) => alert(error.message));
+});
+
 configFile.addEventListener("change", async () => {
   const file = configFile.files[0];
   if (!file) return;
+  if (hasActiveDraft()) {
+    alert("当前有未确认的配置草稿，请先确认或放弃修改。");
+    configFile.value = "";
+    return;
+  }
   const form = new FormData();
   form.append("config", file);
   setBusy(true);

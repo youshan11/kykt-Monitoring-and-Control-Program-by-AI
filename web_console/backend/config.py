@@ -9,6 +9,8 @@ FRONTEND_ROOT = WEB_ROOT / "frontend"
 RUNTIME_ROOT = WEB_ROOT / "runtime"
 UPLOAD_ROOT = RUNTIME_ROOT / "uploads"
 BACKUP_ROOT = RUNTIME_ROOT / "backups"
+CONFIG_DRAFT_ROOT = RUNTIME_ROOT / "config_drafts"
+CONFIG_DRAFT_STATE_FILE = RUNTIME_ROOT / "config_draft_state.json"
 
 CONFIG_DOCX = PROJECT_ROOT / "sampling_config.docx"
 DATA_DIR = PROJECT_ROOT / "data"
@@ -29,10 +31,17 @@ CODEX_HISTORY_LIMIT = int(os.environ.get("WEB_CONSOLE_CODEX_HISTORY_LIMIT", "6")
 CODEX_MODEL = os.environ.get("WEB_CONSOLE_CODEX_MODEL", "").strip()
 CODEX_REASONING_EFFORT = os.environ.get("WEB_CONSOLE_CODEX_REASONING_EFFORT", "low").strip()
 
-# Default stays reasonably constrained. Hardware/SSH deployments can override with:
-# WEB_CONSOLE_CODEX_EXTRA_ARGS="--dangerously-bypass-approvals-and-sandbox"
-CODEX_EXTRA_ARGS = shlex.split(os.environ.get("WEB_CONSOLE_CODEX_EXTRA_ARGS", "-s workspace-write"))
-CODEX_RESUME_EXTRA_ARGS = shlex.split(os.environ.get("WEB_CONSOLE_CODEX_RESUME_EXTRA_ARGS", ""))
+# This web console is a trusted local control surface. The default bypasses the
+# Codex sandbox because this host's bwrap sandbox can fail while editing DOCX
+# files and because sampling control may need local process/SSH access.
+DEFAULT_CODEX_EXTRA_ARGS = "--dangerously-bypass-approvals-and-sandbox"
+CODEX_EXTRA_ARGS = shlex.split(os.environ.get("WEB_CONSOLE_CODEX_EXTRA_ARGS", DEFAULT_CODEX_EXTRA_ARGS))
+CODEX_RESUME_EXTRA_ARGS = shlex.split(
+    os.environ.get(
+        "WEB_CONSOLE_CODEX_RESUME_EXTRA_ARGS",
+        os.environ.get("WEB_CONSOLE_CODEX_EXTRA_ARGS", DEFAULT_CODEX_EXTRA_ARGS),
+    )
+)
 
 
 def _codex_model_args() -> list[str]:

@@ -39,16 +39,17 @@ WEB_CONSOLE_CODEX_TIMEOUT_SECONDS=600
 WEB_CONSOLE_CODEX_HISTORY_LIMIT=6
 WEB_CONSOLE_CODEX_MODEL=
 WEB_CONSOLE_CODEX_REASONING_EFFORT=low
-WEB_CONSOLE_CODEX_EXTRA_ARGS="-s workspace-write"
-WEB_CONSOLE_CODEX_RESUME_EXTRA_ARGS=
+WEB_CONSOLE_CODEX_EXTRA_ARGS="--dangerously-bypass-approvals-and-sandbox"
+WEB_CONSOLE_CODEX_RESUME_EXTRA_ARGS="--dangerously-bypass-approvals-and-sandbox"
 ```
 
 每个网页对话会在 `meta.json` 中保存 `codex_session_id`，后续消息会优先使用 `codex exec resume` 复用该 Codex 会话。`WEB_CONSOLE_CODEX_HISTORY_LIMIT` 控制首次创建 Codex 会话时附带的最近网页历史条数。
 
-如果实际硬件控制或 SSH 在 Codex 沙箱内不可用，可在受控内网环境下显式改为：
+默认配置会让网页端 Codex 以 `--dangerously-bypass-approvals-and-sandbox` 运行。原因是本地 DOCX 修改和硬件/SSH 控制需要稳定的文件与进程访问，而部分主机上的 bwrap 沙箱会在 DOCX 写入/解包时失败。
+
+这会让 agent 以更高权限执行项目命令，只应在可信本机服务中使用。如果需要重新启用沙箱，可显式设置：
 
 ```bash
-WEB_CONSOLE_CODEX_EXTRA_ARGS="--dangerously-bypass-approvals-and-sandbox"
+WEB_CONSOLE_CODEX_EXTRA_ARGS="-s workspace-write"
+WEB_CONSOLE_CODEX_RESUME_EXTRA_ARGS="-s workspace-write"
 ```
-
-这会让 agent 以更高权限执行项目命令，只应在可信本机服务中使用。

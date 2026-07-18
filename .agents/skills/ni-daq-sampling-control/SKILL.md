@@ -27,6 +27,10 @@ Treat these as stop commands:
 
 If the user command is ambiguous, ask one concise clarification before touching hardware or sampling processes.
 
+Treat natural-language requests to change sample rate, duration, channels, enabled tasks, TDMS output naming, host/control settings, timing mode, voltage range, output value, counter mode, or any other sampling parameter as configuration-change commands.
+
+For configuration-change commands, the operator-facing Word document is the source of truth. If the web console provides an active draft Word path, read and edit that draft. Otherwise, read and edit the local `sampling_config.docx`. Do not treat `sampling_config.md`, previous chat summaries, or memory as the active configuration.
+
 ## Required Confirmation
 
 Starting and stopping sampling are hardware/process control actions. Always ask for explicit confirmation before running either action.
@@ -36,6 +40,8 @@ For start commands, summarize the enabled `[[tasks]]` from `sampling_config.docx
 For stop commands, summarize the recorded active process if available and ask the user to confirm. Accept `确认停止`, `确认终止`, or `y`. If the client sends an empty message immediately after the prompt, treat it as pressing Enter to confirm. Do not run `python3 .agents/skills/ni-daq-sampling-control/scripts/ni_daq_sampling_control.py stop --confirm-stop` until the user confirms.
 
 Validation and status commands do not require confirmation.
+
+Changing the active target Word document does not require a separate pre-edit confirmation when the user's requested mapping to schema v2 fields is clear. It does require a post-edit confirmation loop: after each edit, validate the document and send the complete current sampling configuration to the user for review. Keep editing the same target document according to the user's follow-up instructions and resending the complete configuration until the user clearly confirms that the configuration is correct. In web-console draft mode, the web backend saves or discards the draft; do not copy the draft to `sampling_config.docx` yourself.
 
 ## Project Files
 
@@ -107,6 +113,21 @@ When the TOML cannot be parsed:
 5. Run `validate` again before any start command.
 
 Do not invent missing host details, channel names, task timing values, voltage ranges, output values, terminal routes, or unsupported acquisition modes. If a non-standard edit conflicts with existing settings or cannot be mapped confidently, ask a clarification and stop before changing hardware state.
+
+## Configuration Change Workflow
+
+When the user describes a desired sampling-configuration change:
+
+1. Read the active target Word document: the web-provided draft path when present, otherwise local `sampling_config.docx`.
+2. Extract the single fenced `toml sampling-config` block and use it as the current source of truth.
+3. Map the user's request to schema v2 fields. If the request is ambiguous, unsafe, references an unknown channel, or requests unsupported runner behavior, ask one concise clarification before editing.
+4. Edit only the affected TOML fields in the active target Word document, preserving unrelated settings, task order, comments, and templates where practical.
+5. Validate with `python3 .agents/skills/ni-daq-sampling-control/scripts/ni_daq_sampling_control.py validate --config <target-docx>`.
+6. Reply with a brief change summary plus the complete current sampling configuration, including top-level `[host]`, `[tdms]`, `[control]`, and every `[[tasks]]` entry in the active `sampling-config` TOML block.
+7. Ask the user to confirm whether the configuration is correct.
+8. If the user requests more changes, repeat this workflow from the same active target document. If the user confirms the configuration is correct, record that the configuration is confirmed in the conversation and wait for the next user command. In web-console draft mode, tell the user to save with `确认修改`/`修改完成` or the confirm button; the backend promotes the draft to the formal config.
+
+If the user combines a configuration change with a start request, complete this configuration-confirmation loop first. In web-console draft mode, the draft must also be saved by the backend before start. After that, run the normal start workflow and ask for the separate explicit start confirmation before launching hardware/process control.
 
 ## Stop Workflow
 

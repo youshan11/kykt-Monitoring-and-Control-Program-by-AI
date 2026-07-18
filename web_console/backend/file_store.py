@@ -19,6 +19,7 @@ def ensure_runtime_dirs() -> None:
         config.RUNTIME_ROOT,
         config.UPLOAD_ROOT,
         config.BACKUP_ROOT,
+        config.CONFIG_DRAFT_ROOT,
         config.CONVERSATIONS_ROOT,
         config.DATA_DIR,
     ):
@@ -149,7 +150,14 @@ def create_conversation(title: str | None = None) -> dict:
 
 
 def ensure_runtime_dirs_without_active() -> None:
-    for path in (config.RUNTIME_ROOT, config.UPLOAD_ROOT, config.BACKUP_ROOT, config.CONVERSATIONS_ROOT, config.DATA_DIR):
+    for path in (
+        config.RUNTIME_ROOT,
+        config.UPLOAD_ROOT,
+        config.BACKUP_ROOT,
+        config.CONFIG_DRAFT_ROOT,
+        config.CONVERSATIONS_ROOT,
+        config.DATA_DIR,
+    ):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -315,6 +323,176 @@ def _write_config_history_records(records: list[dict]) -> None:
     )
 
 
+def _safe_docx_filename(filename: str | None, default_name: str) -> str:
+    name = Path((filename or "").strip()).name
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", name).strip(" .")
+    if not name:
+        name = default_name
+    if not name.lower().endswith(".docx"):
+        name += ".docx"
+    return name[:160]
+
+
+def _read_config_draft_state_file() -> dict:
+    if not config.CONFIG_DRAFT_STATE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(config.CONFIG_DRAFT_STATE_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_config_draft_state(state: dict) -> None:
+    config.CONFIG_DRAFT_STATE_FILE.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _clear_config_draft_state() -> None:
+    try:
+        config.CONFIG_DRAFT_STATE_FILE.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def config_draft_status() -> dict:
+    ensure_runtime_dirs_without_active()
+    state = _read_config_draft_state_file()
+    draft_path = Path(str(state.get("draft_path", ""))) if state.get("draft_path") else None
+    if not draft_path or not draft_path.is_file():
+        return {"active": False}
+    try:
+        draft_path.relative_to(config.CONFIG_DRAFT_ROOT)
+    except ValueError:
+        return {"active": False}
+    stat = draft_path.stat()
+    return {
+        "active": True,
+        "id": str(state.get("id", draft_path.stem)),
+        "draft_path": str(draft_path),
+        "base_config_path": str(state.get("base_config_path", config.CONFIG_DOCX)),
+        "base_display_filename": str(state.get("base_display_filename", config.CONFIG_DOCX.name)),
+        "conversation_id": str(state.get("conversation_id", "")) or None,
+        "created_at": str(state.get("created_at", "")),
+        "updated_at": str(state.get("updated_at", "")),
+        "size": stat.st_size,
+        "suggested_filename": str(state.get("suggested_filename", "")) or f"sampling_config_{timestamp()}.docx",
+    }
+
+
+def ensure_config_draft(conversation_id: str | None = None, requested_by: str = "") -> dict:
+    ensure_runtime_dirs()
+    current = config_draft_status()
+    if current.get("active"):
+        return {"created": False, "draft": current}
+    if not config.CONFIG_DOCX.exists():
+        raise FileNotFoundError("当前配置文档不存在")
+
+    draft_id = f"{timestamp()}_{uuid.uuid4().hex[:8]}"
+    draft_path = config.CONFIG_DRAFT_ROOT / f"{draft_id}.docx"
+    shutil.copy2(config.CONFIG_DOCX, draft_path)
+    now = utc_now_iso()
+    state = {
+        "active": True,
+        "id": draft_id,
+        "draft_path": str(draft_path),
+        "base_config_path": str(config.CONFIG_DOCX),
+        "base_display_filename": _read_config_display_filename(),
+        "base_history_id": str(_read_config_meta().get("history_id", "")) or None,
+        "conversation_id": conversation_id,
+        "created_at": now,
+        "updated_at": now,
+        "requested_by": requested_by[:500],
+        "suggested_filename": f"sampling_config_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+    }
+    _write_config_draft_state(state)
+    return {"created": True, "draft": config_draft_status()}
+
+
+def _append_config_snapshot_from_path(path: Path, display_filename: str, source: str) -> dict:
+    stamp = timestamp()
+    stored_filename = _safe_docx_filename(display_filename, f"sampling_config_{stamp}.docx")
+    stored_path = config.UPLOAD_ROOT / f"{stamp}_{uuid.uuid4().hex[:8]}_{stored_filename}"
+    shutil.copy2(path, stored_path)
+    stat = stored_path.stat()
+    return _append_config_history(
+        {
+            "id": stored_path.name,
+            "filename": stored_filename,
+            "stored_name": stored_path.name,
+            "stored_path": str(stored_path),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+            "size": stat.st_size,
+            "source": source,
+        }
+    )
+
+
+def confirm_config_draft(display_filename: str | None = None) -> dict:
+    ensure_runtime_dirs()
+    draft = config_draft_status()
+    if not draft.get("active"):
+        raise FileNotFoundError("没有待确认的配置草稿")
+
+    draft_path = Path(draft["draft_path"])
+    final_filename = _safe_docx_filename(display_filename, draft.get("suggested_filename") or f"sampling_config_{timestamp()}.docx")
+
+    previous_record = None
+    backup_path = None
+    if config.CONFIG_DOCX.exists():
+        previous_record = _append_config_snapshot_from_path(
+            config.CONFIG_DOCX,
+            _read_config_display_filename(),
+            "previous_active_before_agent_confirm",
+        )
+        backup_path = config.BACKUP_ROOT / f"sampling_config_{timestamp()}.docx"
+        shutil.copy2(config.CONFIG_DOCX, backup_path)
+
+    confirmed_record = _append_config_snapshot_from_path(
+        draft_path,
+        final_filename,
+        "agent_draft_confirmed",
+    )
+    shutil.copy2(Path(confirmed_record["stored_path"]), config.CONFIG_DOCX)
+    _write_config_meta(
+        final_filename,
+        source_path=Path(confirmed_record["stored_path"]),
+        history_id=confirmed_record["id"],
+        uploaded_at=confirmed_record["uploaded_at"],
+    )
+
+    try:
+        draft_path.unlink()
+    except FileNotFoundError:
+        pass
+    _clear_config_draft_state()
+
+    return {
+        "filename": final_filename,
+        "active_config": str(config.CONFIG_DOCX),
+        "history_id": confirmed_record["id"],
+        "confirmed_record": confirmed_record,
+        "previous_record": previous_record,
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+
+
+def discard_config_draft() -> dict:
+    ensure_runtime_dirs_without_active()
+    draft = config_draft_status()
+    if not draft.get("active"):
+        raise FileNotFoundError("没有待放弃的配置草稿")
+    draft_path = Path(draft["draft_path"])
+    try:
+        draft_path.unlink()
+    except FileNotFoundError:
+        pass
+    _clear_config_draft_state()
+    return {"discarded": True, "draft": draft}
+
+
 def _upload_timestamp_iso(path: Path) -> str:
     match = re.match(r"^(\d{8})_(\d{6})_", path.name)
     if match:
@@ -345,7 +523,7 @@ def _normalize_config_history_record(record: dict, upload_path: Path | None = No
     stat = path.stat()
     filename = str(record.get("filename") or _display_filename_from_upload(path)).strip() or path.name
     uploaded_at = str(record.get("uploaded_at") or _upload_timestamp_iso(path)).strip()
-    return {
+    normalized = {
         "id": stored_name,
         "filename": filename,
         "stored_name": stored_name,
@@ -353,6 +531,9 @@ def _normalize_config_history_record(record: dict, upload_path: Path | None = No
         "uploaded_at": uploaded_at,
         "size": int(record.get("size") or stat.st_size),
     }
+    if record.get("source"):
+        normalized["source"] = str(record.get("source"))
+    return normalized
 
 
 def _append_config_history(record: dict) -> dict:
@@ -516,6 +697,7 @@ def config_status() -> dict:
         "active_config": str(config.CONFIG_DOCX),
         "display_filename": _read_config_display_filename(),
         "active_history_id": str(_read_config_meta().get("history_id", "")).strip() or None,
+        "config_draft": config_draft_status(),
         "config_exists": stat is not None,
         "config_size": stat.st_size if stat else 0,
         "config_modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(

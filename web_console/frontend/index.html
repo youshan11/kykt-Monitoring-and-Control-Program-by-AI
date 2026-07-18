@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Project1 Agent Console</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=10" />
   </head>
   <body>
     <main class="shell">
@@ -20,20 +20,33 @@
           </label>
         </header>
 
+        <section id="configDraftBanner" class="draft-banner" hidden>
+          <div>
+            <strong>配置修改中</strong>
+            <p id="configDraftText">草稿未保存，确认前不能启动采样。</p>
+          </div>
+          <div class="draft-actions">
+            <button id="confirmConfigDraft" type="button">确认修改文件</button>
+            <button id="discardConfigDraft" type="button">放弃修改</button>
+          </div>
+        </section>
+
         <div id="messages" class="messages"></div>
 
-        <div class="quick-actions" aria-label="快捷操作">
-          <button data-message="开始采样">开始执行</button>
-          <button data-message="确认启动">确认启动</button>
-          <button data-message="停止采样">停止执行</button>
-          <button data-message="确认停止">确认停止</button>
-          <button data-message="查看当前采样状态">查询状态</button>
-        </div>
+        <div class="bottom-controls">
+          <form id="chatForm" class="composer">
+            <textarea id="messageInput" rows="2" placeholder="输入要发给 agent 的自然语言命令"></textarea>
+            <button id="sendButton" type="submit">发送</button>
+          </form>
 
-        <form id="chatForm" class="composer">
-          <textarea id="messageInput" rows="2" placeholder="输入要发给 agent 的自然语言命令"></textarea>
-          <button id="sendButton" type="submit">发送</button>
-        </form>
+          <div class="quick-actions" aria-label="快捷操作">
+            <button data-message="开始采样" data-block-draft="true">开始执行</button>
+            <button data-message="确认启动" data-block-draft="true">确认启动</button>
+            <button data-message="停止采样">停止执行</button>
+            <button data-message="确认停止">确认停止</button>
+            <button data-message="查看当前采样状态">查询状态</button>
+          </div>
+        </div>
       </section>
 
       <aside class="side-pane" aria-label="结果和对话记录">
@@ -62,6 +75,6 @@
       </aside>
     </main>
 
-    <script src="/app.js?v=6"></script>
+    <script src="/app.js?v=10"></script>
   </body>
 </html>

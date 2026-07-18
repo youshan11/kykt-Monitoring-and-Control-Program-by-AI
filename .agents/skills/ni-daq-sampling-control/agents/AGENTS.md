@@ -5,6 +5,7 @@ This agent controls NI DAQ data sampling and output tasks on a measurement host.
 The external contract is intentionally small:
 
 - `sampling_config.docx` is the operator-editable schema v2 configuration.
+- Natural-language configuration-change requests must be applied to the local `sampling_config.docx` before they are treated as active.
 - Natural-language commands start, stop, validate, or inspect sampling.
 - `data/` contains returned TDMS files and logs.
 
@@ -23,6 +24,10 @@ The normal project entry points are:
 `sampling_config.docx` must use `schema_version = 2` and `[[tasks]]`. One task is one NI-DAQmx task. Summaries before start should list enabled tasks with their `name`, `type`, `channels`, timing mode, and output/log paths.
 
 Current runner support for enabled tasks is documented in `references/sampling-config-format.md`. Do not enable triggered tasks, non-voltage AI measurements, hardware-timed AO/DO waveforms, or CI modes other than `count_edges` until the runner supports them.
+
+When the user asks to change sampling configuration, read the active Word document: use the web-provided draft path when the web console says configuration draft mode is active; otherwise use local `sampling_config.docx`. Never use `sampling_config.md`, a chat-only draft, or memory as the active configuration. Modify the single fenced `toml sampling-config` block in that Word document, preserving unrelated settings where practical, and validate with `python3 .agents/skills/ni-daq-sampling-control/scripts/ni_daq_sampling_control.py validate --config <target-docx>`.
+
+After every configuration edit, reply with a concise change summary and the complete current sampling configuration: include `[host]`, `[tdms]`, `[control]`, and all `[[tasks]]` entries from the active TOML block. Ask the user to confirm whether the configuration is correct. If the user requests further changes, repeat the same process from the same active target document and resend the complete configuration. In web-console draft mode, only the web backend may promote the draft to formal `sampling_config.docx`; tell the user to save with `确认修改`/`修改完成` or the confirm button. If a start request is combined with configuration changes, complete this configuration-confirmation loop and save the draft before asking for the separate start confirmation.
 
 If `sampling_config.docx` is edited into non-standard or natural-language text, inspect the raw fenced block and infer the intended legal TOML setting only when the meaning is clear. Summarize the inferred change to the user and ask for confirmation before editing the config. After confirmation, rewrite only the affected lines into valid schema v2 TOML, rerun validation, and only then continue to start/stop/status workflow as appropriate. If the intent is ambiguous or unsafe, ask a concise clarification and do not change hardware state.
 
