@@ -20,7 +20,9 @@ from .file_store import (
     clear_codex_session_id,
     confirm_config_draft,
     create_conversation,
+    delete_config_history,
     delete_conversation,
+    delete_tdms_file,
     discard_config_draft,
     ensure_config_draft,
     ensure_runtime_dirs,
@@ -235,6 +237,12 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/conversations/"):
             conversation_id = parsed.path.split("/")[3]
             self._handle_delete_conversation(conversation_id)
+        elif parsed.path.startswith("/api/config-history/"):
+            config_id = unquote(parsed.path.removeprefix("/api/config-history/"))
+            self._handle_delete_config_history(config_id)
+        elif parsed.path.startswith("/api/tdms/"):
+            name = unquote(parsed.path.removeprefix("/api/tdms/"))
+            self._handle_delete_tdms(name)
         else:
             self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -277,6 +285,31 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             self._send_error(HTTPStatus.NOT_FOUND, "对话不存在")
         except ValueError as exc:
             self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def _handle_delete_config_history(self, config_id: str) -> None:
+        if config_draft_status().get("active"):
+            self._send_error(HTTPStatus.CONFLICT, "当前有未确认的配置草稿，请先确认或放弃修改")
+            return
+        try:
+            result = delete_config_history(config_id)
+        except FileNotFoundError:
+            self._send_error(HTTPStatus.NOT_FOUND, "配置历史不存在")
+            return
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        self._send_json(result)
+
+    def _handle_delete_tdms(self, name: str) -> None:
+        try:
+            result = delete_tdms_file(name)
+        except FileNotFoundError:
+            self._send_error(HTTPStatus.NOT_FOUND, "TDMS 文件不存在")
+            return
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        self._send_json(result)
 
     def _send_chat_system_result(self, conversation_id: str, user_msg: dict, content: str) -> None:
         system_msg = append_message("system", content, conversation_id=conversation_id)

@@ -48,7 +48,7 @@ button:disabled {
 
 .shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) 560px;
   gap: 16px;
   height: 100vh;
   height: 100dvh;
@@ -287,17 +287,37 @@ textarea {
 }
 
 .file-row {
-  display: block;
+  align-items: center;
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--text);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
   margin-bottom: 8px;
-  padding: 10px;
-  text-decoration: none;
+  padding: 8px;
 }
 
 .file-row:hover {
   border-color: var(--accent);
+}
+
+.file-download {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-download:hover {
+  color: var(--accent);
+}
+
+.tdms-delete {
+  font-size: 12px;
+  padding: 8px;
 }
 
 .conversation-list,
@@ -344,12 +364,26 @@ textarea {
   color: var(--accent);
   font-size: 12px;
   font-weight: 700;
+  padding: 0 4px;
   white-space: nowrap;
 }
 
-.config-history-select {
+.config-history-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.config-history-select,
+.config-history-delete {
   font-size: 12px;
   padding: 8px;
+}
+
+.danger:hover {
+  border-color: #b42318;
+  color: #b42318;
 }
 
 .conversation-row {
@@ -386,10 +420,6 @@ textarea {
   padding: 8px;
 }
 
-.conversation-action.danger:hover {
-  border-color: #b42318;
-  color: #b42318;
-}
 
 body.preview-open {
   overflow: hidden;
@@ -460,7 +490,7 @@ body.preview-open {
   word-break: break-word;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1120px) {
   .shell {
     grid-template-columns: 1fr;
     height: auto;

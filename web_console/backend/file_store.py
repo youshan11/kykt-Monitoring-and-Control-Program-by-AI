@@ -718,6 +718,31 @@ def select_config_history(config_id: str) -> dict:
     }
 
 
+def delete_config_history(config_id: str) -> dict:
+    ensure_runtime_dirs_without_active()
+    record = _resolve_config_history_record(config_id)
+    active_stored_name = str(_read_config_meta().get("source_stored_name", "")).strip()
+    if active_stored_name and record["stored_name"] == active_stored_name:
+        raise ValueError("不能删除当前正在使用的配置历史")
+
+    path = Path(record["stored_path"]).resolve()
+    if path.parent != config.UPLOAD_ROOT.resolve() or path.name != record["stored_name"]:
+        raise ValueError("非法配置历史路径")
+
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+    records = [
+        item
+        for item in _read_config_history_records()
+        if item.get("stored_name") != record["stored_name"] and item.get("id") != record["id"]
+    ]
+    _write_config_history_records(records)
+    return {"deleted": record["id"], "configs": list_config_history()}
+
+
 def save_uploaded_config(filename: str, data: bytes) -> dict:
     ensure_runtime_dirs()
     if not filename.lower().endswith(".docx"):
@@ -803,6 +828,12 @@ def resolve_tdms_download(name: str) -> Path:
     if path.parent != config.DATA_DIR.resolve() or not path.is_file():
         raise FileNotFoundError(name)
     return path
+
+
+def delete_tdms_file(name: str) -> dict:
+    path = resolve_tdms_download(name)
+    path.unlink()
+    return {"deleted": path.name, "files": list_tdms_files()}
 
 
 def config_status() -> dict:

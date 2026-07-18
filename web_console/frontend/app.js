@@ -46,6 +46,12 @@ function updateControls() {
   document.querySelectorAll(".conversation-action, .conversation-open, .config-history-select").forEach((button) => {
     button.disabled = busy || draftActive;
   });
+  document.querySelectorAll(".config-history-delete").forEach((button) => {
+    button.disabled = busy || draftActive || button.dataset.active === "true";
+  });
+  document.querySelectorAll(".tdms-delete").forEach((button) => {
+    button.disabled = busy;
+  });
   confirmConfigDraftButton.disabled = busy || !draftActive;
   discardConfigDraftButton.disabled = busy || !draftActive;
 }
@@ -238,20 +244,34 @@ function renderConfigHistory(configs) {
 
     info.append(name, meta);
 
+    const actions = document.createElement("div");
+    actions.className = "config-history-actions";
+
     if (config.active) {
       const active = document.createElement("span");
       active.className = "config-history-active";
       active.textContent = "当前";
-      row.append(info, active);
+      actions.appendChild(active);
     } else {
       const select = document.createElement("button");
       select.type = "button";
       select.className = "config-history-select";
       select.textContent = "使用";
       select.addEventListener("click", () => selectConfigHistory(config));
-      row.append(info, select);
+      actions.appendChild(select);
     }
 
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "config-history-delete danger";
+    remove.textContent = "删除";
+    remove.dataset.active = config.active ? "true" : "false";
+    remove.disabled = Boolean(config.active);
+    remove.title = config.active ? "当前正在使用的配置不能删除" : "删除配置历史";
+    remove.addEventListener("click", () => deleteConfigHistory(config));
+    actions.appendChild(remove);
+
+    row.append(info, actions);
     configHistoryEl.appendChild(row);
   }
   updateControls();
@@ -319,20 +339,74 @@ async function loadStatus() {
     : "当前配置不存在";
 }
 
-async function loadTdms() {
-  const payload = await requestJson("/api/tdms");
-  const files = payload.files || [];
+function renderTdmsFiles(files) {
   tdmsFiles.innerHTML = "";
   if (!files.length) {
     tdmsFiles.textContent = "暂无 TDMS 文件";
     return;
   }
   for (const file of files) {
-    const row = document.createElement("a");
+    const row = document.createElement("div");
     row.className = "file-row";
-    row.href = `/api/tdms/${encodeURIComponent(file.name)}`;
-    row.textContent = `${file.name} · ${formatSize(file.size)}`;
+
+    const download = document.createElement("a");
+    download.className = "file-download";
+    download.href = `/api/tdms/${encodeURIComponent(file.name)}`;
+    download.textContent = `${file.name} · ${formatSize(file.size)}`;
+    download.title = file.modified_at ? formatDate(file.modified_at) : file.name;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "tdms-delete danger";
+    remove.textContent = "删除";
+    remove.addEventListener("click", () => deleteTdmsFile(file));
+
+    row.append(download, remove);
     tdmsFiles.appendChild(row);
+  }
+  updateControls();
+}
+
+async function loadTdms() {
+  const payload = await requestJson("/api/tdms");
+  renderTdmsFiles(payload.files || []);
+}
+
+async function deleteTdmsFile(file) {
+  if (busy) return;
+  if (!confirm(`删除 TDMS 文件“${file.name}”？`)) return;
+  setBusy(true);
+  try {
+    const payload = await requestJson(`/api/tdms/${encodeURIComponent(file.name)}`, {
+      method: "DELETE",
+    });
+    renderTdmsFiles(payload.files || []);
+  } catch (error) {
+    alert(error.message);
+    await loadTdms().catch(() => {});
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteConfigHistory(config) {
+  if (busy || config.active) return;
+  if (hasActiveDraft()) {
+    alert("当前有未确认的配置草稿，请先确认或放弃修改。");
+    return;
+  }
+  if (!confirm(`删除配置历史“${config.filename || config.id}”？`)) return;
+  setBusy(true);
+  try {
+    const payload = await requestJson(`/api/config-history/${encodeURIComponent(config.id)}`, {
+      method: "DELETE",
+    });
+    renderConfigHistory(payload.configs || []);
+  } catch (error) {
+    alert(error.message);
+    await loadConfigHistory().catch(() => {});
+  } finally {
+    setBusy(false);
   }
 }
 
