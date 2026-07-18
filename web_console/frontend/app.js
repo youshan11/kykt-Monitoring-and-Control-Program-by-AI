@@ -12,6 +12,13 @@ const configDraftBanner = document.getElementById("configDraftBanner");
 const configDraftText = document.getElementById("configDraftText");
 const confirmConfigDraftButton = document.getElementById("confirmConfigDraft");
 const discardConfigDraftButton = document.getElementById("discardConfigDraft");
+const previewConfigButton = document.getElementById("previewConfig");
+const previewModal = document.getElementById("previewModal");
+const previewTitle = document.getElementById("previewTitle");
+const previewMeta = document.getElementById("previewMeta");
+const previewContent = document.getElementById("previewContent");
+const refreshPreviewButton = document.getElementById("refreshPreview");
+const closePreviewButton = document.getElementById("closePreview");
 
 let busy = false;
 let lastMessagesJson = "";
@@ -30,6 +37,7 @@ function updateControls() {
   sendButton.disabled = busy;
   newConversationButton.disabled = busy || draftActive;
   configFile.disabled = busy || draftActive;
+  previewConfigButton.disabled = busy;
   document.querySelector(".upload-button")?.classList.toggle("disabled", busy || draftActive);
 
   document.querySelectorAll(".quick-actions button").forEach((button) => {
@@ -169,6 +177,40 @@ function renderConversations(conversations) {
     conversationsEl.appendChild(row);
   }
   updateControls();
+}
+
+function renderPreview(preview) {
+  previewTitle.textContent = preview.title || "配置文档预览";
+  const size = preview.size ? formatSize(preview.size) : "未知大小";
+  const modifiedAt = preview.modified_at ? formatDate(preview.modified_at) : "未知时间";
+  const source = preview.is_draft ? "未保存草稿" : "当前正式配置";
+  previewMeta.textContent = `${source} · ${preview.display_filename || "sampling_config.docx"} · ${size} · ${modifiedAt}`;
+  previewContent.textContent = preview.content || "(没有可预览的文本内容)";
+}
+
+async function loadPreview() {
+  previewTitle.textContent = "配置文档预览";
+  previewMeta.textContent = "读取中...";
+  previewContent.textContent = "读取中...";
+  const payload = await requestJson("/api/config-preview");
+  renderPreview(payload.preview || {});
+}
+
+async function openPreview() {
+  previewModal.hidden = false;
+  document.body.classList.add("preview-open");
+  try {
+    await loadPreview();
+  } catch (error) {
+    previewTitle.textContent = "配置文档预览";
+    previewMeta.textContent = "读取失败";
+    previewContent.textContent = error.message;
+  }
+}
+
+function closePreview() {
+  previewModal.hidden = true;
+  document.body.classList.remove("preview-open");
 }
 
 function renderConfigHistory(configs) {
@@ -465,6 +507,27 @@ confirmConfigDraftButton.addEventListener("click", () => {
 
 discardConfigDraftButton.addEventListener("click", () => {
   discardConfigDraft().catch((error) => alert(error.message));
+});
+
+previewConfigButton.addEventListener("click", () => {
+  openPreview();
+});
+
+refreshPreviewButton.addEventListener("click", () => {
+  loadPreview().catch((error) => {
+    previewMeta.textContent = "读取失败";
+    previewContent.textContent = error.message;
+  });
+});
+
+closePreviewButton.addEventListener("click", closePreview);
+
+previewModal.addEventListener("click", (event) => {
+  if (event.target === previewModal) closePreview();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !previewModal.hidden) closePreview();
 });
 
 configFile.addEventListener("change", async () => {

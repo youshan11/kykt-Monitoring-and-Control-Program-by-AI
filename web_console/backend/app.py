@@ -15,6 +15,7 @@ from .agent_bridge import AgentBridgeError, CodexCliAgentBridge
 from .file_store import (
     append_message,
     config_draft_status,
+    config_preview,
     config_status,
     confirm_config_draft,
     create_conversation,
@@ -52,9 +53,16 @@ START_COMMAND_PATTERNS = (
 
 CONFIG_CHANGE_EXPLICIT_HINTS = (
     "修改配置",
+    "配置修改",
     "更改配置",
+    "配置更改",
     "调整配置",
+    "配置调整",
     "改配置",
+    "改为模板",
+    "换成模板",
+    "使用模板",
+    "套用模板",
     "修改word",
     "修改 word",
     "更改word",
@@ -63,8 +71,14 @@ CONFIG_CHANGE_EXPLICIT_HINTS = (
 CONFIG_CHANGE_TARGETS = (
     "word文档",
     "配置文档",
+    "配置文件",
+    "当前配置",
+    "正式配置",
     "采样配置",
     "采集配置",
+    "采样模板",
+    "任务模板",
+    "模板",
     "sampling_config",
     "sample_rate",
     "sample rate",
@@ -81,7 +95,7 @@ CONFIG_CHANGE_TARGETS = (
     "counter",
 )
 
-CONFIG_CHANGE_VERBS = ("改", "修改", "更改", "调整", "设置", "设为", "改成", "换成", "启用", "禁用")
+CONFIG_CHANGE_VERBS = ("改", "修改", "更改", "调整", "设置", "设为", "改成", "换成", "替换为", "使用", "套用", "应用", "启用", "禁用")
 DRAFT_CONFIRM_PATTERNS = ("确认修改", "修改完成", "保存修改", "确认保存", "保存配置", "配置确认", "确认配置")
 DRAFT_DISCARD_PATTERNS = ("放弃修改", "取消修改", "撤销修改", "丢弃修改", "不要保存")
 
@@ -166,6 +180,13 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             self._send_json({"conversation_id": conversation_id, "messages": read_messages(conversation_id)})
         elif path == "/api/status":
             self._send_json(config_status())
+        elif path == "/api/config-preview":
+            try:
+                self._send_json({"preview": config_preview()})
+            except FileNotFoundError as exc:
+                self._send_error(HTTPStatus.NOT_FOUND, str(exc))
+            except ValueError as exc:
+                self._send_error(HTTPStatus.UNPROCESSABLE_ENTITY, str(exc))
         elif path == "/api/config-history":
             self._send_json({"configs": list_config_history()})
         elif path == "/api/config-draft":

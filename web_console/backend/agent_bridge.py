@@ -148,9 +148,12 @@ class CodexCliAgentBridge:
             重要约束：
             - 核心逻辑仍由 project1 和项目内 skill/脚本负责。
             - 网页上传的配置已经替换为 project1/sampling_config.docx。
-            - 如果用户提出采样配置修改想法，网页后端会进入配置修改模式；
-              有草稿路径时必须修改草稿 Word 文档，没有草稿路径时才以
-              project1/sampling_config.docx 作为当前正式配置入口。
+            - 如果用户提出采样配置修改想法，网页后端应先进入配置修改模式并提供草稿路径。
+              有草稿路径时只能修改草稿 Word 文档。没有草稿路径时，只能读取
+              project1/sampling_config.docx，绝不能修改正式配置文件。
+            - 未处于网页配置修改模式时，项目文件整体视为只读；不要新建、修改、删除、
+              复制、重命名 project1 下的任何文件，也不要运行 apply_patch、重定向写入、
+              保存文件或会改变文件内容的脚本。已确认的开始/停止采样控制命令除外。
             - 不要把 sampling_config.md、对话草稿或记忆当作生效配置。
             - 每次修改配置文档后，先校验配置，再把完整采样配置发给用户确认；
               如果用户继续提出修改，继续从当前草稿 Word 文档修改并重发完整配置，
@@ -181,7 +184,9 @@ class CodexCliAgentBridge:
 
             请继续遵守本会话此前的 project1 NI DAQ agent 规则，并用中文回复网页用户。
             {draft_instructions}
-            如果本轮涉及采样配置修改，必须修改当前草稿 Word 文档；没有草稿时才读取正式 project1/sampling_config.docx。
+            如果本轮涉及采样配置修改，必须修改当前草稿 Word 文档；没有草稿时只能读取正式 project1/sampling_config.docx，
+            绝不能修改正式配置文件或 project1 下任何其它文件。未处于网页配置修改模式时，项目文件整体视为只读；
+            不要运行 apply_patch、重定向写入、保存文件或会改变文件内容的脚本。已确认的开始/停止采样控制命令除外。
             校验后发送完整采样配置给用户确认，并按用户反馈继续修改直到确认无误。
             """
         ).strip()

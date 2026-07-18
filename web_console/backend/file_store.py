@@ -7,6 +7,8 @@ import json
 import re
 import shutil
 import uuid
+import zipfile
+import xml.etree.ElementTree as ET
 
 from . import config
 
@@ -379,6 +381,106 @@ def config_draft_status() -> dict:
         "updated_at": str(state.get("updated_at", "")),
         "size": stat.st_size,
         "suggested_filename": str(state.get("suggested_filename", "")) or f"sampling_config_{timestamp()}.docx",
+    }
+
+
+def _word_tag_name(node: ET.Element) -> str:
+    return node.tag.rsplit("}", 1)[-1]
+
+
+def _word_paragraph_text(paragraph: ET.Element) -> str:
+    parts: list[str] = []
+    for node in paragraph.iter():
+        tag = _word_tag_name(node)
+        if tag in {"t", "instrText"} and node.text:
+            parts.append(node.text)
+        elif tag == "tab":
+            parts.append("\t")
+        elif tag in {"br", "cr"}:
+            parts.append("\n")
+    return "".join(parts)
+
+
+def _word_block_text(container: ET.Element) -> list[str]:
+    blocks: list[str] = []
+    for child in list(container):
+        tag = _word_tag_name(child)
+        if tag == "p":
+            blocks.append(_word_paragraph_text(child))
+        elif tag == "tbl":
+            blocks.extend(_word_table_text(child))
+        else:
+            blocks.extend(_word_block_text(child))
+    return blocks
+
+
+def _word_table_text(table: ET.Element) -> list[str]:
+    rows: list[str] = []
+    for row in [child for child in list(table) if _word_tag_name(child) == "tr"]:
+        cells: list[str] = []
+        for cell in [child for child in list(row) if _word_tag_name(child) == "tc"]:
+            cell_blocks = [block for block in _word_block_text(cell) if block.strip()]
+            cells.append(" / ".join(cell_blocks))
+        if cells:
+            rows.append("\t".join(cells))
+    return rows
+
+
+def _docx_part_text(docx_file: zipfile.ZipFile, part_name: str) -> str:
+    try:
+        root = ET.fromstring(docx_file.read(part_name))
+    except (KeyError, ET.ParseError):
+        return ""
+    body = next((node for node in root.iter() if _word_tag_name(node) == "body"), root)
+    return "\n".join(_word_block_text(body)).strip()
+
+
+def _docx_preview_text(path: Path) -> str:
+    try:
+        with zipfile.ZipFile(path) as docx_file:
+            sections: list[str] = []
+            main_text = _docx_part_text(docx_file, "word/document.xml")
+            if main_text:
+                sections.append(main_text)
+            for part_name in sorted(docx_file.namelist()):
+                if re.match(r"word/(?:header|footer|footnotes|endnotes)\d*\.xml$", part_name):
+                    part_text = _docx_part_text(docx_file, part_name)
+                    if part_text:
+                        sections.append(part_text)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("配置文档不是有效的 DOCX 文件") from exc
+
+    content = "\n\n".join(sections).strip()
+    if not content:
+        return "(Word 文档没有可预览的文本内容)"
+    return content
+
+
+def config_preview() -> dict:
+    draft = config_draft_status()
+    if draft.get("active"):
+        path = Path(draft["draft_path"])
+        display_filename = draft.get("suggested_filename") or path.name
+        is_draft = True
+        title = f"草稿预览：{display_filename}"
+    else:
+        path = config.CONFIG_DOCX
+        display_filename = _read_config_display_filename()
+        is_draft = False
+        title = f"当前配置：{display_filename}"
+
+    if not path.is_file():
+        raise FileNotFoundError("配置文档不存在")
+
+    stat = path.stat()
+    return {
+        "title": title,
+        "display_filename": display_filename,
+        "source_path": str(path),
+        "is_draft": is_draft,
+        "size": stat.st_size,
+        "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+        "content": _docx_preview_text(path),
     }
 
 

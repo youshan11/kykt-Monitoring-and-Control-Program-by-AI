@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Project1 Agent Console</title>
-    <link rel="stylesheet" href="/styles.css?v=10" />
+    <link rel="stylesheet" href="/styles.css?v=11" />
   </head>
   <body>
     <main class="shell">
@@ -14,10 +14,13 @@
             <h1>Project1 Agent Console</h1>
             <p id="configStatus">读取配置状态中...</p>
           </div>
-          <label class="upload-button">
-            上传 DOCX
-            <input id="configFile" type="file" accept=".docx" />
-          </label>
+          <div class="topbar-actions">
+            <button id="previewConfig" type="button">预览 DOCX</button>
+            <label class="upload-button">
+              上传 DOCX
+              <input id="configFile" type="file" accept=".docx" />
+            </label>
+          </div>
         </header>
 
         <section id="configDraftBanner" class="draft-banner" hidden>
@@ -75,6 +78,22 @@
       </aside>
     </main>
 
-    <script src="/app.js?v=10"></script>
+    <section id="previewModal" class="preview-modal" hidden aria-label="配置文档预览">
+      <div class="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+        <header class="preview-header">
+          <div>
+            <h2 id="previewTitle">配置文档预览</h2>
+            <p id="previewMeta" class="preview-meta"></p>
+          </div>
+          <div class="preview-actions">
+            <button id="refreshPreview" type="button">刷新</button>
+            <button id="closePreview" type="button">关闭</button>
+          </div>
+        </header>
+        <pre id="previewContent" class="preview-content">读取中...</pre>
+      </div>
+    </section>
+
+    <script src="/app.js?v=11"></script>
   </body>
 </html>
