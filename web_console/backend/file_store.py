@@ -231,6 +231,19 @@ def set_codex_session_id(conversation_id: str, session_id: str) -> dict:
     return meta
 
 
+def clear_codex_session_id(conversation_id: str | None = None) -> dict | None:
+    conversation_id = conversation_id or get_active_conversation_id(create_if_missing=False)
+    if not conversation_id:
+        return None
+    meta = _read_meta(conversation_id)
+    if "codex_session_id" not in meta:
+        return meta
+    meta.pop("codex_session_id", None)
+    meta["updated_at"] = utc_now_iso()
+    _write_meta(conversation_id, meta)
+    return meta
+
+
 def append_message(role: str, content: str, conversation_id: str | None = None) -> dict:
     ensure_runtime_dirs()
     conversation_id = conversation_id or get_active_conversation_id()

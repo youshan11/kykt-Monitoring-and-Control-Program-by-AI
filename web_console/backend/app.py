@@ -17,6 +17,7 @@ from .file_store import (
     config_draft_status,
     config_preview,
     config_status,
+    clear_codex_session_id,
     confirm_config_draft,
     create_conversation,
     delete_conversation,
@@ -314,6 +315,7 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
                     self._send_chat_system_result(conversation_id, user_msg, "当前没有待放弃的配置草稿。")
                     return
                 result = discard_config_draft()
+                clear_codex_session_id(conversation_id)
                 self._send_chat_system_result(
                     conversation_id,
                     user_msg,
@@ -335,6 +337,7 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
                     return
                 try:
                     result = confirm_config_draft(_extract_config_filename(message))
+                    clear_codex_session_id(conversation_id)
                 except (FileNotFoundError, ValueError) as exc:
                     self._send_chat_system_result(conversation_id, user_msg, str(exc))
                     return
@@ -404,6 +407,7 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             return
         try:
             result = confirm_config_draft(name)
+            clear_codex_session_id()
         except (FileNotFoundError, ValueError) as exc:
             self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
             return
@@ -413,6 +417,7 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
     def _handle_discard_config_draft(self) -> None:
         try:
             result = discard_config_draft()
+            clear_codex_session_id()
         except FileNotFoundError as exc:
             self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
             return
@@ -425,6 +430,7 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             return
         try:
             result = select_config_history(config_id)
+            clear_codex_session_id()
         except FileNotFoundError:
             self._send_error(HTTPStatus.NOT_FOUND, "配置历史不存在")
             return
@@ -465,6 +471,7 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
         try:
             filename, data = self._extract_multipart_file(content_type, body)
             result = save_uploaded_config(filename, data)
+            clear_codex_session_id()
         except ValueError as exc:
             self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
             return
