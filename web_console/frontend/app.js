@@ -25,6 +25,7 @@ let lastMessagesJson = "";
 let refreshTimer = null;
 let pendingAgent = false;
 let pendingStartedAt = null;
+let pendingText = null;
 let activeConversationId = null;
 let currentConfigDraft = { active: false };
 
@@ -107,7 +108,7 @@ function renderConfigDraft(draft) {
 
 function pendingMessageText() {
   const startedAt = pendingStartedAt || Date.now();
-  return "agent 正在处理... " + formatElapsed(Date.now() - startedAt);
+  return `${pendingText || "agent 正在处理..."} ${formatElapsed(Date.now() - startedAt)}`;
 }
 
 function renderMessages(messages, force = false) {
@@ -436,6 +437,7 @@ async function sendMessage(message) {
   appendLocalMessage("user", message);
   pendingAgent = true;
   pendingStartedAt = Date.now();
+  pendingText = "agent 正在处理...";
   renderMessages(JSON.parse(lastMessagesJson), true);
   inputEl.value = "";
   setBusy(true);
@@ -453,6 +455,40 @@ async function sendMessage(message) {
   } finally {
     pendingAgent = false;
     pendingStartedAt = null;
+    pendingText = null;
+    setBusy(false);
+    stopAutoRefresh();
+    await refreshDynamicContent().catch(() => {});
+  }
+}
+
+async function runSamplingAction(button) {
+  if (busy) return;
+  const action = button.dataset.samplingAction;
+  const message = button.dataset.message || button.textContent.trim();
+  if (!action || !message) return;
+
+  appendLocalMessage("user", message);
+  pendingAgent = true;
+  pendingStartedAt = Date.now();
+  pendingText = "采样控制正在执行...";
+  renderMessages(JSON.parse(lastMessagesJson), true);
+  setBusy(true);
+  startAutoRefresh(1000);
+  try {
+    await requestJson(`/api/sampling/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    await refreshDynamicContent();
+  } catch (error) {
+    alert(error.message);
+    await loadMessages().catch(() => {});
+  } finally {
+    pendingAgent = false;
+    pendingStartedAt = null;
+    pendingText = null;
     setBusy(false);
     stopAutoRefresh();
     await refreshDynamicContent().catch(() => {});
@@ -568,7 +604,13 @@ formEl.addEventListener("submit", (event) => {
 });
 
 document.querySelectorAll(".quick-actions button").forEach((button) => {
-  button.addEventListener("click", () => sendMessage(button.dataset.message));
+  button.addEventListener("click", () => {
+    if (button.dataset.samplingAction) {
+      runSamplingAction(button);
+      return;
+    }
+    sendMessage(button.dataset.message);
+  });
 });
 
 newConversationButton.addEventListener("click", () => {

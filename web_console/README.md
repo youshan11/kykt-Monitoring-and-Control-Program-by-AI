@@ -20,12 +20,13 @@ http://127.0.0.1:8765
 
 - 上传 `.docx` 会备份并替换 `sampling_config.docx`。
 - 文本框输入会发送给服务器上的 Codex agent。
-- 快捷按钮也是发送自然语言：
-  - 开始执行：`开始采样`
-  - 确认启动：`确认启动`
-  - 停止执行：`停止采样`
-  - 确认停止：`确认停止`
-  - 查询状态：`查看当前采样状态`
+- 快捷按钮直接调用后端采样控制接口，不经过 agent：
+  - 开始执行：准备启动确认，校验配置并检查当前状态。
+  - 确认启动：执行 `ni_daq_sampling_control.py start --confirm-start`。
+  - 停止执行：准备停止确认，检查当前状态。
+  - 确认停止：执行 `ni_daq_sampling_control.py stop --confirm-stop`。
+  - 查询状态：执行 `ni_daq_sampling_control.py status`。
+- 文本框里的明确采样控制短语与快捷按钮等效，可交叉使用；其它自然语言仍按原方式交给 Codex agent 处理。
 - TDMS 文件从 `data/*.tdms` 列表中下载。
 - 对话记录保存在 `web_console/runtime/conversations/`，支持新建、切换、重命名和删除。
 

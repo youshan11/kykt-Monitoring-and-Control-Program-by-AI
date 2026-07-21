@@ -53,6 +53,20 @@ START_COMMAND_PATTERNS = (
     "确认启动",
     "确认开始",
 )
+START_REQUEST_COMMAND_PATTERNS = (
+    "开始采样",
+    "采样开始",
+    "启动采样",
+    "开始采集",
+    "启动采集",
+    "开始记录",
+    "开始执行",
+)
+START_CONFIRM_COMMAND_PATTERNS = ("确认启动", "确认开始")
+STOP_REQUEST_COMMAND_PATTERNS = ("停止采样", "停止采集", "停止记录", "停止执行", "终止采样", "终止采集")
+STOP_CONFIRM_COMMAND_PATTERNS = ("确认停止", "确认终止")
+STATUS_COMMAND_PATTERNS = ("查看当前采样状态", "查看采样状态", "查询采样状态", "当前采样状态", "采样状态", "查询状态")
+GENERIC_CONFIRM_COMMAND_PATTERNS = ("y", "yes", "确认")
 
 CONFIG_CHANGE_EXPLICIT_HINTS = (
     "修改配置",
@@ -158,6 +172,51 @@ def _validate_config_document(config_path: str) -> tuple[bool, str]:
 
 agent_lock = threading.Lock()
 agent_bridge = CodexCliAgentBridge()
+sampling_lock = threading.Lock()
+sampling_confirmations: dict[str, dict] = {}
+
+
+def _sampling_control_script() -> Path:
+    return config.PROJECT_ROOT / ".agents/skills/ni-daq-sampling-control/scripts/ni_daq_sampling_control.py"
+
+
+def _config_mtime_ns() -> int | None:
+    if not config.CONFIG_DOCX.exists():
+        return None
+    return config.CONFIG_DOCX.stat().st_mtime_ns
+
+
+def _run_sampling_control(*args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["python3", str(_sampling_control_script()), *args],
+        cwd=config.PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _format_completed_process(title: str, proc: subprocess.CompletedProcess[str]) -> str:
+    parts = [title]
+    stdout = proc.stdout.strip()
+    stderr = proc.stderr.strip()
+    if stdout:
+        parts.append(stdout)
+    if stderr:
+        parts.append("stderr:\n" + stderr)
+    if proc.returncode != 0:
+        parts.append(f"退出码：{proc.returncode}")
+    return "\n\n".join(parts)
+
+
+def _status_indicates_running(output: str) -> bool:
+    return '"status": "running"' in output and "process_running: True" in output
+
+
+def _status_indicates_stale_running(output: str) -> bool:
+    return '"status": "running"' in output and "process_running: False" in output
 
 
 class WebConsoleHandler(SimpleHTTPRequestHandler):
@@ -212,6 +271,16 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             self._handle_confirm_config_draft()
         elif parsed.path == "/api/config-draft/discard":
             self._handle_discard_config_draft()
+        elif parsed.path == "/api/sampling/start-request":
+            self._handle_sampling_start_request()
+        elif parsed.path == "/api/sampling/start-confirm":
+            self._handle_sampling_start_confirm()
+        elif parsed.path == "/api/sampling/stop-request":
+            self._handle_sampling_stop_request()
+        elif parsed.path == "/api/sampling/stop-confirm":
+            self._handle_sampling_stop_confirm()
+        elif parsed.path == "/api/sampling/status":
+            self._handle_sampling_status()
         elif parsed.path.startswith("/api/config-history/") and parsed.path.endswith("/select"):
             config_id = unquote(parsed.path.removeprefix("/api/config-history/").removesuffix("/select"))
             self._handle_select_config_history(config_id)
@@ -324,6 +393,303 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def _sampling_intent_for_message(self, message: str) -> str | None:
+        if _is_config_change_intent(message) or _is_draft_confirm_intent(message) or _is_draft_discard_intent(message):
+            return None
+        normalized = _normalized_message(message)
+        if not normalized:
+            return None
+        if normalized in GENERIC_CONFIRM_COMMAND_PATTERNS:
+            confirmation = sampling_confirmations.get(get_active_conversation_id())
+            if confirmation and confirmation.get("action") == "start":
+                return "start-confirm"
+            if confirmation and confirmation.get("action") == "stop":
+                return "stop-confirm"
+            return None
+        if normalized in { _normalized_message(pattern) for pattern in START_CONFIRM_COMMAND_PATTERNS }:
+            return "start-confirm"
+        if normalized in { _normalized_message(pattern) for pattern in STOP_CONFIRM_COMMAND_PATTERNS }:
+            return "stop-confirm"
+        if normalized in { _normalized_message(pattern) for pattern in STATUS_COMMAND_PATTERNS }:
+            return "status"
+        if normalized in { _normalized_message(pattern) for pattern in START_REQUEST_COMMAND_PATTERNS }:
+            return "start-request"
+        if normalized in { _normalized_message(pattern) for pattern in STOP_REQUEST_COMMAND_PATTERNS }:
+            return "stop-request"
+        return None
+
+    def _dispatch_sampling_intent(self, intent: str, message: str) -> None:
+        handlers = {
+            "start-request": self._handle_sampling_start_request,
+            "start-confirm": self._handle_sampling_start_confirm,
+            "stop-request": self._handle_sampling_stop_request,
+            "stop-confirm": self._handle_sampling_stop_confirm,
+            "status": self._handle_sampling_status,
+        }
+        handlers[intent](message)
+
+    def _read_sampling_message(self, default: str) -> str:
+        if int(self.headers.get("Content-Length", "0") or "0") <= 0:
+            return default
+        try:
+            payload = self._read_json_body()
+        except ValueError:
+            return default
+        return str(payload.get("message", "")).strip() or default
+
+    def _send_sampling_system_result(
+        self,
+        conversation_id: str,
+        user_msg: dict,
+        content: str,
+        *,
+        status: HTTPStatus = HTTPStatus.OK,
+    ) -> None:
+        system_msg = append_message("system", content, conversation_id=conversation_id)
+        self._send_json(
+            {
+                "active_conversation_id": conversation_id,
+                "user_message": user_msg,
+                "system_message": system_msg,
+                "status": config_status(),
+                "configs": list_config_history(),
+                "conversations": list_conversations(),
+            },
+            status=status,
+        )
+
+    def _send_sampling_timeout(self, conversation_id: str, user_msg: dict, action: str) -> None:
+        sampling_confirmations.pop(conversation_id, None)
+        self._send_sampling_system_result(conversation_id, user_msg, f"{action}超时，未完成操作。", status=HTTPStatus.GATEWAY_TIMEOUT)
+
+    def _sampling_confirmation_error(self, conversation_id: str, action: str) -> str | None:
+        confirmation = sampling_confirmations.get(conversation_id)
+        if not confirmation or confirmation.get("action") != action:
+            label = "开始执行" if action == "start" else "停止执行"
+            return f"没有待确认的{label}请求。请先点击“{label}”，再点击确认按钮。"
+        if confirmation.get("config_mtime_ns") != _config_mtime_ns():
+            sampling_confirmations.pop(conversation_id, None)
+            return "当前配置文件在确认前已经变化，本次确认已失效。请重新发起操作。"
+        return None
+
+    def _cleanup_stale_sampling_state(self, status_output: str) -> subprocess.CompletedProcess[str] | None:
+        if not _status_indicates_stale_running(status_output):
+            return None
+        return _run_sampling_control("stop", "--confirm-stop", timeout=300)
+
+    def _format_status_with_cleanup(
+        self,
+        title: str,
+        status_proc: subprocess.CompletedProcess[str],
+        cleanup_proc: subprocess.CompletedProcess[str] | None,
+    ) -> str:
+        content = _format_completed_process(title, status_proc)
+        if cleanup_proc is None:
+            return content
+        return (
+            content
+            + "\n\n检测到状态文件仍为 running，但采样进程已经结束；已自动执行停止清理：\n\n"
+            + _format_completed_process("自动清理结果：", cleanup_proc)
+        )
+
+    def _handle_sampling_start_request(self, message: str | None = None) -> None:
+        if message is None:
+            message = self._read_sampling_message("开始采样")
+        if not sampling_lock.acquire(blocking=False):
+            self._send_error(HTTPStatus.CONFLICT, "采样控制正在执行上一条操作，请稍后再试")
+            return
+        try:
+            conversation_id = get_active_conversation_id()
+            user_msg = append_message("user", message, conversation_id=conversation_id)
+            if config_draft_status().get("active"):
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    "当前有未确认的配置草稿。请先确认修改或放弃修改；在此之前不能启动采样。",
+                )
+                return
+
+            ok, validate_output = _validate_config_document(str(config.CONFIG_DOCX))
+            if not ok:
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    "启动前配置校验失败，未创建启动确认。\n\n" + validate_output,
+                )
+                return
+
+            status_proc = _run_sampling_control("status", timeout=180)
+            status_output = "\n".join(part.strip() for part in (status_proc.stdout, status_proc.stderr) if part.strip())
+            if status_proc.returncode != 0:
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    _format_completed_process("启动前读取采样状态失败，未创建启动确认。", status_proc),
+                )
+                return
+            cleanup_proc = self._cleanup_stale_sampling_state(status_output)
+            if cleanup_proc is not None and cleanup_proc.returncode != 0:
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    self._format_status_with_cleanup("启动前发现旧采样状态需要清理，但自动清理失败。", status_proc, cleanup_proc),
+                )
+                return
+            if _status_indicates_running(status_output):
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    _format_completed_process("当前已有采样任务在运行，未创建新的启动确认。", status_proc),
+                )
+                return
+
+            sampling_confirmations[conversation_id] = {
+                "action": "start",
+                "config_mtime_ns": _config_mtime_ns(),
+            }
+            status_text = self._format_status_with_cleanup("当前采样状态：", status_proc, cleanup_proc)
+            self._send_sampling_system_result(
+                conversation_id,
+                user_msg,
+                "启动请求已准备好。请点击或输入“确认启动”执行采样；如果确认前配置文件变化，需要重新发起启动。\n\n"
+                + "配置校验结果：\n"
+                + validate_output
+                + "\n\n"
+                + status_text,
+            )
+        except subprocess.TimeoutExpired:
+            self._send_sampling_timeout(conversation_id, user_msg, "启动前检查")
+        finally:
+            sampling_lock.release()
+
+    def _handle_sampling_start_confirm(self, message: str | None = None) -> None:
+        if message is None:
+            message = self._read_sampling_message("确认启动")
+        if not sampling_lock.acquire(blocking=False):
+            self._send_error(HTTPStatus.CONFLICT, "采样控制正在执行上一条操作，请稍后再试")
+            return
+        try:
+            conversation_id = get_active_conversation_id()
+            user_msg = append_message("user", message, conversation_id=conversation_id)
+            if config_draft_status().get("active"):
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    "当前有未确认的配置草稿。请先确认修改或放弃修改；在此之前不能启动采样。",
+                )
+                return
+            error = self._sampling_confirmation_error(conversation_id, "start")
+            if error:
+                self._send_sampling_system_result(conversation_id, user_msg, error)
+                return
+
+            sampling_confirmations.pop(conversation_id, None)
+            proc = _run_sampling_control("start", "--confirm-start", timeout=300)
+            self._send_sampling_system_result(conversation_id, user_msg, _format_completed_process("启动采样执行结果：", proc))
+        except subprocess.TimeoutExpired:
+            self._send_sampling_timeout(conversation_id, user_msg, "启动采样")
+        finally:
+            sampling_lock.release()
+
+    def _handle_sampling_stop_request(self, message: str | None = None) -> None:
+        if message is None:
+            message = self._read_sampling_message("停止采样")
+        if not sampling_lock.acquire(blocking=False):
+            self._send_error(HTTPStatus.CONFLICT, "采样控制正在执行上一条操作，请稍后再试")
+            return
+        try:
+            conversation_id = get_active_conversation_id()
+            user_msg = append_message("user", message, conversation_id=conversation_id)
+            status_proc = _run_sampling_control("status", timeout=180)
+            status_output = "\n".join(part.strip() for part in (status_proc.stdout, status_proc.stderr) if part.strip())
+            if status_proc.returncode != 0:
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    _format_completed_process("停止前读取采样状态失败，未创建停止确认。", status_proc),
+                )
+                return
+            cleanup_proc = self._cleanup_stale_sampling_state(status_output)
+            if cleanup_proc is not None:
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    self._format_status_with_cleanup("采样进程已经自然结束，未创建停止确认。", status_proc, cleanup_proc),
+                )
+                return
+            if not _status_indicates_running(status_output):
+                sampling_confirmations.pop(conversation_id, None)
+                self._send_sampling_system_result(
+                    conversation_id,
+                    user_msg,
+                    _format_completed_process("当前没有正在运行的采样任务，未创建停止确认。", status_proc),
+                )
+                return
+
+            sampling_confirmations[conversation_id] = {
+                "action": "stop",
+                "config_mtime_ns": _config_mtime_ns(),
+            }
+            self._send_sampling_system_result(
+                conversation_id,
+                user_msg,
+                "停止请求已准备好。请点击或输入“确认停止”结束采样；如果确认前配置文件变化，需要重新发起停止。\n\n"
+                + "当前采样状态：\n"
+                + (status_output or "status 没有输出"),
+            )
+        except subprocess.TimeoutExpired:
+            self._send_sampling_timeout(conversation_id, user_msg, "停止前检查")
+        finally:
+            sampling_lock.release()
+
+    def _handle_sampling_stop_confirm(self, message: str | None = None) -> None:
+        if message is None:
+            message = self._read_sampling_message("确认停止")
+        if not sampling_lock.acquire(blocking=False):
+            self._send_error(HTTPStatus.CONFLICT, "采样控制正在执行上一条操作，请稍后再试")
+            return
+        try:
+            conversation_id = get_active_conversation_id()
+            user_msg = append_message("user", message, conversation_id=conversation_id)
+            error = self._sampling_confirmation_error(conversation_id, "stop")
+            if error:
+                self._send_sampling_system_result(conversation_id, user_msg, error)
+                return
+
+            sampling_confirmations.pop(conversation_id, None)
+            proc = _run_sampling_control("stop", "--confirm-stop", timeout=300)
+            self._send_sampling_system_result(conversation_id, user_msg, _format_completed_process("停止采样执行结果：", proc))
+        except subprocess.TimeoutExpired:
+            self._send_sampling_timeout(conversation_id, user_msg, "停止采样")
+        finally:
+            sampling_lock.release()
+
+    def _handle_sampling_status(self, message: str | None = None) -> None:
+        if message is None:
+            message = self._read_sampling_message("查看当前采样状态")
+        if not sampling_lock.acquire(blocking=False):
+            self._send_error(HTTPStatus.CONFLICT, "采样控制正在执行上一条操作，请稍后再试")
+            return
+        try:
+            conversation_id = get_active_conversation_id()
+            user_msg = append_message("user", message, conversation_id=conversation_id)
+            proc = _run_sampling_control("status", timeout=180)
+            status_output = "\n".join(part.strip() for part in (proc.stdout, proc.stderr) if part.strip())
+            cleanup_proc = None if proc.returncode != 0 else self._cleanup_stale_sampling_state(status_output)
+            self._send_sampling_system_result(conversation_id, user_msg, self._format_status_with_cleanup("当前采样状态：", proc, cleanup_proc))
+        except subprocess.TimeoutExpired:
+            self._send_sampling_timeout(conversation_id, user_msg, "查询采样状态")
+        finally:
+            sampling_lock.release()
+
     def _handle_chat(self) -> None:
         try:
             payload = self._read_json_body()
@@ -332,6 +698,11 @@ class WebConsoleHandler(SimpleHTTPRequestHandler):
                 raise ValueError("消息不能为空")
         except ValueError as exc:
             self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+
+        sampling_intent = self._sampling_intent_for_message(message)
+        if sampling_intent:
+            self._dispatch_sampling_intent(sampling_intent, message)
             return
 
         if not agent_lock.acquire(blocking=False):
