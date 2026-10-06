@@ -6,3 +6,5 @@ __pycache__/
 web_console/runtime/
 web_console/**/__pycache__/
 web_console/**/*.pyc
+
+*.log
